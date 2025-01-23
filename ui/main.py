@@ -64,11 +64,11 @@ def run():
             server_port = None
         allowed_paths = roop.globals.CFG.allowed_paths
         if allowed_paths is None:
-            allowed_paths = '[/content/drive/]'
+            allowed_paths = ['/content/drive/']
         ssl_verify = False if server_name == '0.0.0.0' else True
         with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}', theme=roop.globals.CFG.selected_theme, css=mycss, delete_cache=(60, 86400)) as ui:
             with gr.Row(variant='compact'):
-                    gr.Markdown(f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/C0untFloyd/roop-unleashed)")
+                    gr.Markdown(f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
                     gr.HTML(util.create_version_html(), elem_id="versions")
             faceswap_tab()
             livecam_tab()
