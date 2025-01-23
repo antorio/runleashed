@@ -1,0 +1,12 @@
+1---------------------------------------------------------------------------------
+git clone https://github.com/norby777/Roop-Unleashed-Runpod.git
+cd Roop-Unleashed-Runpod
+2 Optional---------------------------------------------------------------------------------
+pip install virtualenv
+python -m venv venv
+source venv/bin/activate
+3---------------------------------------------------------------------------------
+pip install -r requirements.txt
+apt-get update
+apt install ffmpeg -y
+python run.py
