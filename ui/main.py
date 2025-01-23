@@ -63,7 +63,7 @@ def run():
         if server_port <= 0:
             server_port = None
         allowed_paths = roop.globals.CFG.allowed_paths
-        if allowed_paths is None
+        if allowed_paths is None:
             allowed_paths = '[/content/drive/]'
         ssl_verify = False if server_name == '0.0.0.0' else True
         with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}', theme=roop.globals.CFG.selected_theme, css=mycss, delete_cache=(60, 86400)) as ui:
