@@ -57,9 +57,13 @@ def faceswap_tab():
                     bt_move_right_target = gr.Button("➡ Move right", size='sm')
                 with gr.Row():
                     bt_remove_selected_input_face = gr.Button("❌ Remove selected", size='sm')
-                    bt_clear_input_faces = gr.Button("💥 Clear all", variant='stop', size='sm')
+                    bt_add_local_faceset = gr.Button('Add local faceset', size='sm')
+                    # bt_clear_input_faces = gr.Button("💥 Clear all", variant='stop', size='sm')
                     bt_remove_selected_target_face = gr.Button("❌ Remove selected", size='sm')
                     bt_add_local = gr.Button('Add local files from', size='sm')
+                with gr.Row():
+                    local_faceset = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
+                    local_folder = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
 
                 with gr.Row():
                     with gr.Column(scale=2):
@@ -138,8 +142,7 @@ def faceswap_tab():
                             bt_preview_mask = gr.Button(
                                 "👥 Show Mask Preview", variant="secondary"
                             )
-                    with gr.Column(scale=2):
-                        local_folder = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
+
                 with gr.Row(variant='panel'):
                     bt_srcfiles = gr.Files(label='Source Images or Facesets', file_count="multiple", file_types=["image", ".fsz", ".webp"], elem_id='filelist', height=233)
                     bt_destfiles = gr.Files(label='Target File(s)', file_count="multiple", file_types=["image", "video", ".webp"], elem_id='filelist', height=233)
@@ -205,6 +208,9 @@ def faceswap_tab():
                 bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
                 gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
             with gr.Column(scale=2):
+                with gr.Row:
+                    bt_outDir = gr.Button("Set Output Dir", size='sm')
+                    output_Dir = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
                 output_method = gr.Dropdown(["File","Virtual Camera", "Both"], value="File", label="Select Output Method", interactive=True)
         with gr.Row(variant='panel'):
             with gr.Column():
@@ -250,6 +256,10 @@ def faceswap_tab():
     bt_clear_input_faces.click(fn=on_clear_input_faces, outputs=[input_faces])
 
     bt_add_local.click(fn=on_add_local_folder, inputs=[local_folder], outputs=[bt_destfiles])
+    bt_add_local_faceset.click(fn=on_add_local_faceset, inputs=[local_faceset], outputs=[bt_srcfiles])
+    
+    bt_outDir.click(fn=on_set_output_folder, inputs=[output_Dir])
+    
     bt_preview_mask.click(fn=on_preview_mask, inputs=[ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
     start_event = bt_start.click(fn=start_swap, 
@@ -313,6 +323,15 @@ def on_add_local_folder(folder):
         gr.Warning("Empty folder or folder not found!")
     return files
 
+def on_add_local_faceset(folder):
+    files = util.get_local_files_from_folder(folder)
+    if files is None:
+        gr.Warning("Empty folder or folder not found!")
+    return files
+
+def on_set_output_folder(folder):
+    roop.globals.output_path = folder
+    return
 
 def on_srcfile_changed(srcfiles, progress=gr.Progress()):
     global SELECTION_FACES_DATA, IS_INPUT, input_faces, face_selection, last_image

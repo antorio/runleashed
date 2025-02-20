@@ -35,7 +35,7 @@ def facemgr_tab() -> None:
             with gr.Column():
                 gr.Markdown(' ')
         with gr.Row():
-            faces = gr.Gallery(label="Faces in this Faceset", allow_preview=True, preview=True, height=128, object_fit="scale-down")
+            faces = gr.Gallery(label="Faces in this Faceset", allow_preview=True, preview=True, height=576, object_fit="scale-down")
         with gr.Row():
             fb_remove = gr.Button("Remove selected", variant='secondary')
             fb_update = gr.Button("Create/Update Faceset file", variant='primary')
