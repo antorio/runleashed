@@ -253,7 +253,7 @@ def faceswap_tab():
     bt_faceselect.click(fn=on_selected_face, outputs=[input_faces, target_faces, selected_face_detection])
     bt_cancelfaceselect.click(fn=on_end_face_selection, outputs=[dynamic_face_selection, face_selection])
 
-    bt_clear_input_faces.click(fn=on_clear_input_faces, outputs=[input_faces])
+    #bt_clear_input_faces.click(fn=on_clear_input_faces, outputs=[input_faces])
 
     bt_add_local.click(fn=on_add_local_folder, inputs=[local_folder], outputs=[bt_destfiles])
     bt_add_local_faceset.click(fn=on_add_local_faceset, inputs=[local_faceset], outputs=[bt_srcfiles])
