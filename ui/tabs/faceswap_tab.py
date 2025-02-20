@@ -258,7 +258,7 @@ def faceswap_tab():
     bt_add_local.click(fn=on_add_local_folder, inputs=[local_folder], outputs=[bt_destfiles])
     bt_add_local_faceset.click(fn=on_add_local_faceset, inputs=[local_faceset], outputs=[bt_srcfiles])
     
-    bt_outDir.click(fn=on_set_output_folder, inputs=[output_Dir], outputs=[roop.globals.output_path])
+    bt_outDir.click(fn=on_set_output_folder, inputs=[output_Dir])
     
     bt_preview_mask.click(fn=on_preview_mask, inputs=[ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
