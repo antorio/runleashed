@@ -208,7 +208,7 @@ def faceswap_tab():
                 bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
                 gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
             with gr.Column(scale=2):
-                with gr.Row:
+                with gr.Row():
                     bt_outDir = gr.Button("Set Output Dir", size='sm')
                     output_Dir = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
                 output_method = gr.Dropdown(["File","Virtual Camera", "Both"], value="File", label="Select Output Method", interactive=True)
