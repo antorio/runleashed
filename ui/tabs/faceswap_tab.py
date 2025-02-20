@@ -208,9 +208,9 @@ def faceswap_tab():
                 bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
                 gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
             with gr.Column(scale=2):
-                with gr.Row():
-                    bt_outDir = gr.Button("Set Output Dir", size='sm')
-                    output_Dir = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
+                #with gr.Row():
+                #   bt_outDir = gr.Button("Set Output Dir", size='sm')
+                #   output_Dir = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
                 output_method = gr.Dropdown(["File","Virtual Camera", "Both"], value="File", label="Select Output Method", interactive=True)
         with gr.Row(variant='panel'):
             with gr.Column():
@@ -258,7 +258,7 @@ def faceswap_tab():
     bt_add_local.click(fn=on_add_local_folder, inputs=[local_folder], outputs=[bt_destfiles])
     bt_add_local_faceset.click(fn=on_add_local_faceset, inputs=[local_faceset], outputs=[bt_srcfiles])
     
-    bt_outDir.click(fn=on_set_output_folder, inputs=[output_Dir])
+    #bt_outDir.click(fn=on_set_output_folder, inputs=[output_Dir])
     
     bt_preview_mask.click(fn=on_preview_mask, inputs=[ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
