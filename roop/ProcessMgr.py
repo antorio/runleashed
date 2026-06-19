@@ -514,7 +514,7 @@ class ProcessMgr():
 
 
     def process_face(self, face_index, target_face: Face, frame: Frame):
-        from roop.face_util import align_crop
+        from roop.face_util import align_crop, get_pitch_from_kps, get_roll_from_kps
 
         enhanced_frame = None
         if len(self.input_face_datas) > 0:
@@ -542,6 +542,49 @@ class ProcessMgr():
                     saved_frame = frame.copy()
                     frame = rotcutframe
                     target_face = rotface
+
+        # POSE CORRECTION: handle extreme pitch (head tipped back/forward) and
+        # large roll not caught by the 90-degree rotation_action heuristic above.
+        # We rotate a padded face cutout so the face looks more frontal,
+        # re-detect, process normally, then paste back and unrotate — same
+        # pattern as the existing rotation_action flow so paste_upscale works correctly.
+        pose_angle = 0.0
+        pose_saved_frame = None
+        pose_startX = pose_startY = 0
+        try:
+            kps = target_face.kps.astype(np.float32)
+            pitch = get_pitch_from_kps(kps)
+            roll  = get_roll_from_kps(kps)
+
+            if rotation_action is None:
+                if abs(roll) > 20.0:
+                    pose_angle = -roll
+                if abs(pitch) > 20.0:
+                    pose_angle += pitch * 0.7
+
+            if abs(pose_angle) > 5.0:
+                (bx1, by1, bx2, by2) = target_face["bbox"].astype("int")
+                bw, bh = bx2 - bx1, by2 - by1
+                pad = int(max(bw, bh) * 0.4)
+                cutout, cx1, cy1, cx2, cy2 = self.cutout(
+                    frame, bx1 - pad, by1 - pad, bx2 + pad, by2 + pad
+                )
+                ch, cw = cutout.shape[:2]
+                cut_center = (cw / 2.0, ch / 2.0)
+                Mpose = cv2.getRotationMatrix2D(cut_center, pose_angle, 1.0)
+                rotated_cut = cv2.warpAffine(cutout, Mpose, (cw, ch),
+                                             borderMode=cv2.BORDER_REPLICATE)
+                pose_face = get_first_face(rotated_cut)
+                if pose_face is not None:
+                    pose_saved_frame = frame.copy()
+                    pose_startX, pose_startY = cx1, cy1
+                    frame = rotated_cut
+                    target_face = pose_face
+                else:
+                    pose_angle = 0.0
+        except Exception as e:
+            print(f"pose correction skipped: {e}")
+            pose_angle = 0.0
 
         model_output_size = self.options.swap_output_size
         subsample_size = max(self.options.subsample_size, model_output_size)
@@ -591,6 +634,16 @@ class ProcessMgr():
         if rotation_action is not None:
             fake_frame = self.auto_unrotate_frame(result, rotation_action)
             result = self.paste_simple(fake_frame, saved_frame, startX, startY)
+
+        # POSE CORRECTION unrotate: reverse the cutout rotation and paste back
+        if pose_angle != 0.0 and pose_saved_frame is not None:
+            ch, cw = result.shape[:2]
+            cut_center = (cw / 2.0, ch / 2.0)
+            # Invert the rotation we applied
+            Mback = cv2.getRotationMatrix2D(cut_center, -pose_angle, 1.0)
+            unrotated = cv2.warpAffine(result, Mback, (cw, ch),
+                                       borderMode=cv2.BORDER_REPLICATE)
+            result = self.paste_simple(unrotated, pose_saved_frame, pose_startX, pose_startY)
 
         return result
 
