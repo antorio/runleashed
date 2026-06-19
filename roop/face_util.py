@@ -259,24 +259,6 @@ def estimate_norm(lmk, image_size=112):
     return M
 
 
-def get_pitch_from_kps(kps: np.ndarray) -> float:
-    """
-    Estimate pitch (head tilting back/forward) from 5 keypoints.
-    Positive = looking up (nose above eye-mouth midpoint in 2D).
-    """
-    eye_center   = (kps[0] + kps[1]) / 2.0
-    mouth_center = (kps[3] + kps[4]) / 2.0
-    face_height  = np.linalg.norm(mouth_center - eye_center) + 1e-6
-    midpoint_y   = (eye_center[1] + mouth_center[1]) / 2.0
-    nose_offset  = midpoint_y - kps[2][1]
-    return float(np.degrees(np.arcsin(np.clip(nose_offset / face_height, -1.0, 1.0))))
-
-
-def get_roll_from_kps(kps: np.ndarray) -> float:
-    """Roll = angle of eye line relative to horizontal."""
-    eye_delta = kps[1] - kps[0]
-    return float(np.degrees(np.arctan2(eye_delta[1], eye_delta[0])))
-
 
 # aligned, M = norm_crop2(f[1], face.kps, 512)
 def align_crop(img, landmark, image_size=112, mode="arcface"):
