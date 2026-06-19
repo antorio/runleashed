@@ -5,8 +5,9 @@ import psutil
 
 from roop.ProcessOptions import ProcessOptions
 
-from roop.face_util import get_first_face, get_all_faces, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
+from roop.face_util import get_first_face, get_all_faces, get_first_face_multi, get_all_faces_multi, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
 from roop.utilities import compute_cosine_distance, get_device, str_to_class, shuffle_array
+from roop.face_stabilizer import LandmarkStabilizer
 import roop.vr_util as vr
 
 from typing import Any, List, Callable
@@ -78,11 +79,16 @@ class ProcessMgr():
     output_to_file = None
     output_to_cam = None
 
+    # video-only landmark smoothing
+    stabilizer = None
+    video_mode = False
+
 
     plugins =  { 
     'faceswap'          : 'FaceSwapInsightFace',
     'mask_clip2seg'     : 'Mask_Clip2Seg',
     'mask_xseg'         : 'Mask_XSeg',
+    'mask_faceparser'   : 'Mask_FaceParser',
     'codeformer'        : 'Enhance_CodeFormer',
     'gfpgan'            : 'Enhance_GFPGAN',
     'dmdnet'            : 'Enhance_DMDNet',
@@ -113,6 +119,11 @@ class ProcessMgr():
         self.last_swapped_frame = None
         self.options = options
         devicename = get_device()
+
+        # (re)create the temporal landmark smoother for this run
+        self.stabilizer = LandmarkStabilizer(
+            strength=roop.globals.landmark_smoothing_strength
+        )
 
         roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]
         if options.swap_mode == "all_female" or options.swap_mode == "all_male":
@@ -280,6 +291,11 @@ class ProcessMgr():
             print("No processor defined!")
             return
 
+        # streaming video path -> enable temporal landmark smoothing
+        self.video_mode = True
+        if self.stabilizer is not None:
+            self.stabilizer.reset()
+
         cap = cv2.VideoCapture(source_video)
         # frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_count = (frame_end - frame_start) + 1
@@ -410,21 +426,35 @@ class ProcessMgr():
     def swap_faces(self, frame, temp_frame):
         num_faces_found = 0
 
+        # temporal smoothing is only safe for sequential video frames
+        smoothing_on = (
+            roop.globals.landmark_smoothing
+            and (self.video_mode or roop.globals.force_landmark_smoothing)
+            and self.stabilizer is not None
+        )
+        mode = roop.globals.multi_angle_detection_mode
+        angles = roop.globals.multi_angle_angles
+
         if self.options.swap_mode == "first":
-            face = get_first_face(frame)
+            face = get_first_face_multi(frame, mode=mode, angles=angles)
 
             if face is None:
                 return num_faces_found, frame
-            
+
+            if smoothing_on:
+                self.stabilizer.stabilize([face])
+
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
             del face
 
         else:
-            faces = get_all_faces(frame)
+            faces = get_all_faces_multi(frame, mode=mode, angles=angles)
             if faces is None:
                 return num_faces_found, frame
-            
+
+            if smoothing_on:
+                self.stabilizer.stabilize(faces)
             if self.options.swap_mode == "all":
                 for face in faces:
                     num_faces_found += 1

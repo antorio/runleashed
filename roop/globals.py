@@ -51,6 +51,21 @@ face_hull_forehead = 0.6
 # reasonable color); enable if source/target lighting differs a lot.
 use_color_transfer = False
 
+# Multi-angle detection: try rotated copies of the frame so sideways / upside
+# down faces are found and landmarked upright. 'off' | 'fallback' | 'always'.
+# 'fallback' (default) only rotates when 0 deg finds nothing -> nearly free.
+# 'always' unions all angles (max recall, ~4x detection cost).
+multi_angle_detection_mode = 'fallback'
+multi_angle_angles = [90, 270, 180]
+
+# Temporal landmark smoothing for video (reduces per-frame jitter). Active only
+# while processing video in-memory, or when force_landmark_smoothing is set
+# (e.g. for the extract-frames video path). Never applied to unrelated image
+# batches. strength in [0,1]; higher = smoother.
+landmark_smoothing = True
+landmark_smoothing_strength = 0.7
+force_landmark_smoothing = False
+
 no_face_action = 0
 
 processing = False

@@ -130,7 +130,7 @@ def faceswap_tab():
                                 "Toggle manual masking", variant="secondary", size="sm"
                             )
                             selected_mask_engine = gr.Dropdown(
-                                ["None", "Clip2Seg", "DFL XSeg"],
+                                ["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"],
                                 value="None",
                                 label="Face masking engine",
                             )
@@ -608,6 +608,8 @@ def map_mask_engine(selected_mask_engine, clip_text):
           mask_engine = None
     elif selected_mask_engine == "DFL XSeg":
         mask_engine = "mask_xseg"
+    elif selected_mask_engine == "Face Parser (BiSeNet)":
+        mask_engine = "mask_faceparser"
     else:
         mask_engine = None
     return mask_engine
@@ -665,6 +667,8 @@ def on_preview_mask(swap_model, frame_num, files, clip_text, mask_engine):
           mask_engine = None
     elif mask_engine == "DFL XSeg":
         mask_engine = "mask_xseg"
+    elif mask_engine == "Face Parser (BiSeNet)":
+        mask_engine = "mask_faceparser"
     options = ProcessOptions(swap_model, get_processing_plugins(mask_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
                               "all", 0, clip_text, None, 0, 128, False, False, True)
 

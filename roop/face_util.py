@@ -62,6 +62,134 @@ def get_all_faces(frame: Frame) -> Any:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Multi-angle detection: rotate the frame by 0/90/180/270 so the detector and
+# landmark models see a near-upright face, then map every detected face back to
+# the original frame coordinates. The 90-degree rotations are lossless, so the
+# mapped landmarks are exact. Modes: 'off', 'fallback' (only rotate when 0 deg
+# finds nothing), 'always' (union over all angles).
+# Point back-transforms were verified empirically against cv2.rotate.
+# ---------------------------------------------------------------------------
+
+def _rotate_frame_for_angle(frame, angle):
+    if angle == 90:
+        return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+    if angle == 180:
+        return cv2.rotate(frame, cv2.ROTATE_180)
+    if angle == 270:
+        return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    return frame
+
+
+def _unrotate_points(pts, angle, H, W):
+    # pts are in the rotated frame; return coordinates in the original HxW frame
+    pts = np.asarray(pts, dtype=np.float32)
+    x = pts[..., 0]
+    y = pts[..., 1]
+    if angle == 90:
+        ox, oy = y, (H - 1) - x
+    elif angle == 180:
+        ox, oy = (W - 1) - x, (H - 1) - y
+    elif angle == 270:
+        ox, oy = (W - 1) - y, x
+    else:
+        return pts.copy()
+    return np.stack([ox, oy], axis=-1).astype(np.float32)
+
+
+def _transform_face_to_original(face, angle, H, W):
+    x1, y1, x2, y2 = [float(v) for v in face['bbox']]
+    corners = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+    oc = _unrotate_points(corners, angle, H, W)
+    face['bbox'] = np.array([oc[:, 0].min(), oc[:, 1].min(),
+                             oc[:, 0].max(), oc[:, 1].max()], dtype=np.float32)
+    kps = face.get('kps', None)
+    if kps is not None:
+        face['kps'] = _unrotate_points(kps, angle, H, W)
+    lm106 = face.get('landmark_2d_106', None)
+    if lm106 is not None:
+        face['landmark_2d_106'] = _unrotate_points(lm106, angle, H, W)
+    lm68 = face.get('landmark_3d_68', None)
+    if lm68 is not None:
+        lm68 = np.asarray(lm68).copy()
+        lm68[:, :2] = _unrotate_points(lm68[:, :2], angle, H, W)
+        face['landmark_3d_68'] = lm68
+    return face
+
+
+def _bbox_iou(a, b):
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    ua = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / ua if ua > 0 else 0.0
+
+
+def _dedup_faces(collected, iou_thr=0.5):
+    # prefer angle-0 detections, then higher detector score
+    def key(item):
+        ang, f = item
+        s = float(getattr(f, 'det_score', 0.0) or 0.0)
+        return (0 if ang == 0 else 1, -s)
+    kept = []
+    for ang, f in sorted(collected, key=key):
+        if any(_bbox_iou(f.bbox, kf.bbox) > iou_thr for kf in kept):
+            continue
+        kept.append(f)
+    return kept
+
+
+def get_all_faces_multi(frame: Frame, mode='fallback', angles=None) -> Any:
+    if mode == 'off' or mode is None:
+        return get_all_faces(frame)
+    if angles is None:
+        angles = [90, 270, 180]
+    analyser = get_face_analyser()
+    H, W = frame.shape[:2]
+
+    try:
+        with conditional_thread_semaphore():
+            base = analyser.get(frame)
+    except Exception:
+        base = []
+    base = base or []
+
+    if mode == 'fallback' and len(base) > 0:
+        return sorted(base, key=lambda x: x.bbox[0])
+
+    collected = [(0, f) for f in base]
+    for ang in angles:
+        rf = _rotate_frame_for_angle(frame, ang)
+        try:
+            with conditional_thread_semaphore():
+                faces = analyser.get(rf)
+        except Exception:
+            faces = None
+        if not faces:
+            continue
+        for f in faces:
+            collected.append((ang, _transform_face_to_original(f, ang, H, W)))
+        if mode == 'fallback' and len(collected) > 0:
+            break
+
+    if len(collected) == 0:
+        return None
+    kept = _dedup_faces(collected)
+    return sorted(kept, key=lambda x: x.bbox[0])
+
+
+def get_first_face_multi(frame: Frame, mode='fallback', angles=None) -> Any:
+    faces = get_all_faces_multi(frame, mode=mode, angles=angles)
+    if not faces:
+        return None
+    return max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+
+
 def extract_face_images(source_filename, video_info, extra_padding=-1.0):
     face_data = []
     source_image = None
