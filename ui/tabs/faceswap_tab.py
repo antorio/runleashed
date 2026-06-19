@@ -183,6 +183,22 @@ def faceswap_tab():
 
         with gr.Row(variant='panel'):
             with gr.Column(scale=1):
+                cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
+            with gr.Column(scale=1):
+                sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Expression amount", info="How strongly to apply the target's expression")
+            with gr.Column(scale=2):
+                with gr.Row():
+                    cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
+                    cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
+                    cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
+        cb_expression.change(fn=on_expression_toggle, inputs=cb_expression, outputs=[])
+        sl_expression.change(fn=on_expression_factor, inputs=sl_expression, outputs=[])
+        cb_expr_eyes.change(fn=on_expr_eyes, inputs=cb_expr_eyes, outputs=[])
+        cb_expr_mouth.change(fn=on_expr_mouth, inputs=cb_expr_mouth, outputs=[])
+        cb_expr_brows.change(fn=on_expr_brows, inputs=cb_expr_brows, outputs=[])
+
+        with gr.Row(variant='panel'):
+            with gr.Column(scale=1):
                 max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
             with gr.Column(scale=1):
                 ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
@@ -278,6 +294,21 @@ def faceswap_tab():
     set_frame_start.click(fn=on_set_frame, inputs=[set_frame_start, preview_frame_num], outputs=[text_frame_clip])
     set_frame_end.click(fn=on_set_frame, inputs=[set_frame_end, preview_frame_num], outputs=[text_frame_clip])
 
+
+def on_expression_toggle(value):
+    roop.globals.expression_restorer = value
+
+def on_expression_factor(value):
+    roop.globals.expression_restorer_factor = value
+
+def on_expr_eyes(value):
+    roop.globals.expression_restore_eyes = value
+
+def on_expr_mouth(value):
+    roop.globals.expression_restore_mouth = value
+
+def on_expr_brows(value):
+    roop.globals.expression_restore_brows = value
 
 def on_mask_top_changed(mask_offset):
     set_mask_offset(0, mask_offset)

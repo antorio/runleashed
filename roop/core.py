@@ -144,6 +144,11 @@ def pre_check() -> bool:
     # BiSeNet face-parsing model for the optional "Face Parser" masking engine.
     # Saved as ./models/bisenet_resnet_34.onnx (matches Mask_FaceParser lookup).
     util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/bisenet_resnet_34.onnx'])
+    # LivePortrait expression restorer models (optional feature).
+    lp_dir = util.resolve_relative_path('../models/liveportrait')
+    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_feature_extractor.onnx'])
+    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_motion_extractor.onnx'])
+    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_generator.onnx'])
     download_directory_path = util.resolve_relative_path('../models/CLIP')
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/rd64-uni-refined.pth'])
     download_directory_path = util.resolve_relative_path('../models/CodeFormer')
@@ -193,6 +198,10 @@ def get_processing_plugins(masking_engine):
     processors = {  "faceswap": {}}
     if masking_engine is not None:
         processors.update({masking_engine: {}})
+
+    # expression restorer runs after the swap, before any enhancer
+    if getattr(roop.globals, 'expression_restorer', False):
+        processors.update({"expression_restorer": {}})
     
     if roop.globals.selected_enhancer == 'GFPGAN':
         processors.update({"gfpgan": {}})

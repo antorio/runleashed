@@ -79,6 +79,14 @@ force_landmark_smoothing = False
 faceset_average_mode = 'robust'
 faceset_outlier_threshold = 0.6
 
+# LivePortrait expression restorer (optional, faceswap tab). Re-injects the
+# target's real expression onto the swapped face. Off by default (heavy model).
+expression_restorer = False
+expression_restorer_factor = 80     # 0-100 -> blend amount
+expression_restore_eyes = True
+expression_restore_mouth = True
+expression_restore_brows = True
+
 no_face_action = 0
 
 processing = False
