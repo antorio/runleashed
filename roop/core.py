@@ -141,6 +141,9 @@ def pre_check() -> bool:
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/GPEN-BFR-512.onnx'])
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/restoreformer_plus_plus.onnx'])
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx'])
+    # BiSeNet face-parsing model for the optional "Face Parser" masking engine.
+    # Saved as ./models/bisenet_resnet_34.onnx (matches Mask_FaceParser lookup).
+    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/bisenet_resnet_34.onnx'])
     download_directory_path = util.resolve_relative_path('../models/CLIP')
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/rd64-uni-refined.pth'])
     download_directory_path = util.resolve_relative_path('../models/CodeFormer')

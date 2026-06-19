@@ -61,6 +61,10 @@ class Mask_FaceParser():
         if self.model_parser is None:
             model_path = self._find_model()
             if model_path is None:
+                # keep state consistent (instance attr, not just class default)
+                self.model_parser = None
+                self.input_name = None
+                self.output_name = None
                 print("[Mask_FaceParser] No face-parsing model found in ./models "
                       "(expected one of: %s). This mask engine will be a no-op."
                       % ", ".join(CANDIDATE_MODELS))
@@ -117,5 +121,9 @@ class Mask_FaceParser():
         return 1.0 - face_region
 
     def Release(self):
-        del self.model_parser
+        # Never use `del self.attr` here: when the model file was missing,
+        # Initialize returns early and model_parser is only the *class* default,
+        # so `del` would raise AttributeError and wedge engine-switching.
         self.model_parser = None
+        self.input_name = None
+        self.output_name = None
