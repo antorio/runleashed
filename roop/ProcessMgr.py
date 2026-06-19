@@ -560,7 +560,7 @@ class ProcessMgr():
                         sliced_frame = self.prepare_crop_frame(sliced_frame)
                         sliced_frame = p.Run(inputface, target_face, sliced_frame)
                         sliced_frame = self.normalize_swap_frame(sliced_frame)
-                swap_result_frames.append(sliced_frame)
+                    swap_result_frames.append(sliced_frame)
                 fake_frame = self.explode_pixel_boost(swap_result_frames, model_output_size, subsample_total, subsample_size)
                 fake_frame = fake_frame.astype(np.uint8)
                 # NEW: light unsharp mask to restore edge detail lost during pixel-boost
