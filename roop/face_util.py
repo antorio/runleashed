@@ -46,8 +46,10 @@ def get_face_analyser() -> Any:
 def get_first_face(frame: Frame) -> Any:
     try:
         faces = get_face_analyser().get(frame)
-        return min(faces, key=lambda x: x.bbox[0])
-    #   return sorted(faces, reverse=True, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))[0]
+        # Pick the largest face (main subject) rather than the left-most one.
+        # The left-most heuristic frequently latched onto a small background
+        # face; largest-area is what "first face" almost always means.
+        return max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
     except:
         return None
 
@@ -231,27 +233,28 @@ arcface_dst = np.array(
  """
 
 def estimate_norm(lmk, image_size=112):
-    if image_size%112==0:
-        ratio = float(image_size)/112.0
-        diff_x = 0
-    else:
-        ratio = float(image_size)/128.0
-        diff_x = 8.0*ratio
-    dst = arcface_dst * ratio
-    dst[:,0] += diff_x
+    """Standard arcface 5-point alignment template estimation.
 
-    if image_size == 160:
-        dst[:,0] += 0.1
-        dst[:,1] += 0.1
-    elif image_size == 256:
-        dst[:,0] += 0.5
-        dst[:,1] += 0.5
-    elif image_size == 320:
-        dst[:,0] += 0.75
-        dst[:,1] += 0.75
-    elif image_size == 512:
-        dst[:,0] += 1.5
-        dst[:,1] += 1.5
+    The previous version added hard-coded magic offsets (+0.1/+0.5/+0.75/+1.5)
+    that were only approximately right. ReSwapper documented the exact sub-pixel
+    correction needed when warping to a resolution other than 112/128:
+        offset = (128/32768) * resolution - 0.5
+    which gives 160->0.125, 256->0.5, 320->0.75, 512->1.5. Using the formula
+    removes the residual misalignment that compounds at extreme angles.
+    """
+    if image_size % 112 == 0:
+        ratio = float(image_size) / 112.0
+        diff_x = 0.0
+    else:
+        ratio = float(image_size) / 128.0
+        diff_x = 8.0 * ratio
+    dst = arcface_dst * ratio
+    dst[:, 0] += diff_x
+
+    if image_size != 112 and image_size != 128:
+        offset = (128.0 / 32768.0) * image_size - 0.5
+        dst[:, 0] += offset
+        dst[:, 1] += offset
 
     tform = trans.SimilarityTransform()
     tform.estimate(lmk, dst)
@@ -259,10 +262,64 @@ def estimate_norm(lmk, image_size=112):
     return M
 
 
+def _arcface_dst_for_size(image_size):
+    """Return the arcface destination template scaled to image_size."""
+    if image_size % 112 == 0:
+        ratio = float(image_size) / 112.0
+        diff_x = 0.0
+    else:
+        ratio = float(image_size) / 128.0
+        diff_x = 8.0 * ratio
+    dst = arcface_dst * ratio
+    dst[:, 0] += diff_x
+    if image_size != 112 and image_size != 128:
+        offset = (128.0 / 32768.0) * image_size - 0.5
+        dst[:, 0] += offset
+        dst[:, 1] += offset
+    return dst.astype(np.float32)
+
+
+def estimate_norm_robust(lmk, image_size=128):
+    """Fit the alignment matrix with a RANSAC affine (4-DOF, like a similarity
+    transform but robust to one or two bad landmarks). This matches FaceFusion's
+    approach and is markedly more stable than plain least-squares at profile /
+    looking-up / looking-down poses where a single keypoint can be off.
+    """
+    dst = _arcface_dst_for_size(image_size)
+    src = np.asarray(lmk, dtype=np.float32).reshape(5, 2)
+    M, _ = cv2.estimateAffinePartial2D(
+        src, dst, method=cv2.RANSAC, ransacReprojThreshold=100
+    )
+    if M is None:
+        # Robust fit failed (degenerate points) -> fall back to similarity.
+        return estimate_norm(lmk, image_size)
+    return M.astype(np.float64)
+
+
+# Standard, well-established 68 -> 5 keypoint mapping.
+# left eye center, right eye center, nose tip, left mouth corner, right mouth corner
+def landmark_68_to_5(landmark_68):
+    lm = np.asarray(landmark_68, dtype=np.float32)[:, :2]
+    left_eye = lm[36:42].mean(axis=0)
+    right_eye = lm[42:48].mean(axis=0)
+    nose = lm[30]
+    mouth_left = lm[48]
+    mouth_right = lm[54]
+    return np.stack([left_eye, right_eye, nose, mouth_left, mouth_right]).astype(np.float32)
+
+
 
 # aligned, M = norm_crop2(f[1], face.kps, 512)
 def align_crop(img, landmark, image_size=112, mode="arcface"):
     M = estimate_norm(landmark, image_size)
+    warped = cv2.warpAffine(img, M, (image_size, image_size), borderValue=0.0)
+    return warped, M
+
+
+def align_crop_robust(img, landmark5, image_size=128):
+    """Align using a RANSAC affine fit. landmark5 is the 5-point set (kps or
+    a 68->5 derived set). Returns the warped crop and the 2x3 matrix."""
+    M = estimate_norm_robust(landmark5, image_size)
     warped = cv2.warpAffine(img, M, (image_size, image_size), borderValue=0.0)
     return warped, M
 

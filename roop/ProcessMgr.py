@@ -545,7 +545,7 @@ class ProcessMgr():
 
 
     def process_face(self,face_index, target_face:Face, frame:Frame):
-        from roop.face_util import align_crop
+        from roop.face_util import align_crop, align_crop_robust, landmark_68_to_5
 
         enhanced_frame = None
         if(len(self.input_face_datas) > 0):
@@ -607,7 +607,20 @@ class ProcessMgr():
         model_output_size = self.options.swap_output_size
         subsample_size = max(self.options.subsample_size, model_output_size)
         subsample_total = subsample_size // model_output_size
-        aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
+
+        # Alignment: derive 5 stable keypoints from the 68-point landmark model
+        # and fit a RANSAC affine. This keeps inswapper accurate at extreme
+        # yaw/pitch where the detector's raw kps get noisy. Falls back cleanly
+        # to the original kps + similarity transform if anything is missing.
+        landmarks68 = getattr(target_face, "landmark_3d_68", None)
+        if roop.globals.use_landmark_alignment and landmarks68 is not None:
+            try:
+                lmk5 = landmark_68_to_5(landmarks68)
+                aligned_img, M = align_crop_robust(frame, lmk5, subsample_size)
+            except Exception:
+                aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
+        else:
+            aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
 
         fake_frame = aligned_img
         target_face.matrix = M
@@ -639,9 +652,9 @@ class ProcessMgr():
         
         if enhanced_frame is None:
             scale_factor = int(upscale / orig_width)
-            result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets)
+            result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, target_face)
         else:
-            result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets)
+            result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, target_face)
 
         # Restore mouth before unrotating
         if self.options.restore_original_mouth:
@@ -682,7 +695,37 @@ class ProcessMgr():
         return blended_image.astype(np.uint8)
 
 
-    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets):
+    def _build_hull_matte(self, crop_h, crop_w, M_scale, target_face):
+        """Build a face-region matte in crop space from the 68-point landmark
+        convex hull (with forehead extension). Returns a uint8 mask the same
+        size as the swapped crop, or None if landmarks are unavailable.
+
+        This follows the actual face silhouette, so when warped back at extreme
+        angles it does not spill onto the neck / ears / background the way a
+        plain rectangle does -- which is the main cause of the 'off' halo."""
+        from roop.face_util import trans_points2d
+        landmarks68 = getattr(target_face, "landmark_3d_68", None)
+        if landmarks68 is None:
+            return None
+        try:
+            pts = np.asarray(landmarks68, dtype=np.float32)[:, :2]
+            # project frame-space landmarks into the (upscaled) crop space
+            pts_crop = trans_points2d(pts, np.asarray(M_scale, dtype=np.float32))
+            jaw = pts_crop[0:17]
+            brows = pts_crop[17:27]
+            chin = pts_crop[8]
+            brow_center = brows.mean(axis=0)
+            up = brow_center - chin  # vector pointing from chin up to the brows
+            forehead = brows + up * float(roop.globals.face_hull_forehead)
+            hull_pts = np.vstack([jaw, forehead]).astype(np.int32)
+            hull = cv2.convexHull(hull_pts)
+            matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
+            cv2.fillConvexPoly(matte, hull, 255)
+            return matte
+        except Exception:
+            return None
+
+    def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, target_face=None):
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
 
@@ -699,8 +742,16 @@ class ProcessMgr():
         right = int(w - (mask_offsets[3] * w))
         img_matte[top:bottom,left:right] = 255
 
-        # Transform white square back to target_img
-        img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_NEAREST, borderValue=0.0) 
+        # Optionally intersect the rectangle with the face convex hull so the
+        # matte follows the face contour (key fix for angled poses).
+        if roop.globals.use_face_hull_mask and target_face is not None:
+            hull_matte = self._build_hull_matte(h, w, M_scale, target_face)
+            if hull_matte is not None:
+                img_matte = np.minimum(img_matte, hull_matte)
+
+        # Transform white area back to target_img (INTER_LINEAR for soft,
+        # anti-aliased edges instead of the stair-stepped INTER_NEAREST).
+        img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_LINEAR, borderValue=0.0)
         ##Blacken the edges of face_matte by 1 pixels (so the mask in not expanded on the image edges)
         img_matte[:1,:] = img_matte[-1:,:] = img_matte[:,:1] = img_matte[:,-1:] = 0
 
@@ -709,6 +760,52 @@ class ProcessMgr():
         img_matte = img_matte.astype(np.float32)/255
         face_matte = face_matte.astype(np.float32)/255
         img_matte = np.minimum(face_matte, img_matte)
+        if self.options.show_face_area_overlay:
+            # Additional steps for green overlay
+            green_overlay = np.zeros_like(target_img)
+            green_color = [0, 255, 0]  # RGB for green
+            for i in range(3):  # Apply green color where img_matte is not zero
+                green_overlay[:, :, i] = np.where(img_matte > 0, green_color[i], 0)        ##Transform upcaled face back to target_img
+        img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1]) 
+        paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+        if upsk_face is not fake_face:
+            fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+            paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
+
+        # Optional Reinhard LAB color transfer toward the target, restricted to
+        # the face region so background lighting does not skew the statistics.
+        if roop.globals.use_color_transfer:
+            paste_face = self._match_color_masked(paste_face, target_img, img_matte)
+
+        # Re-assemble image
+        paste_face = img_matte * paste_face
+        paste_face = paste_face + (1-img_matte) * target_img.astype(np.float32)
+        if self.options.show_face_area_overlay:
+            # Overlay the green overlay on the final image
+            paste_face = cv2.addWeighted(paste_face.astype(np.uint8), 1 - 0.5, green_overlay, 0.5, 0)
+        return paste_face.astype(np.uint8)
+
+
+    def _match_color_masked(self, src, dst, mask):
+        """Reinhard color transfer (LAB mean/std) from dst->src over the masked
+        face region only. src/dst are uint8 BGR full-frame images, mask is a
+        float HxWx1 in [0,1]."""
+        try:
+            m = (mask[:, :, 0] > 0.1)
+            if m.sum() < 32:
+                return src
+            src_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
+            dst_lab = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB).astype(np.float32)
+            for c in range(3):
+                s = src_lab[:, :, c][m]
+                d = dst_lab[:, :, c][m]
+                s_mean, s_std = s.mean(), s.std() + 1e-6
+                d_mean, d_std = d.mean(), d.std() + 1e-6
+                src_lab[:, :, c] = (src_lab[:, :, c] - s_mean) * (d_std / s_std) + d_mean
+            src_lab = np.clip(src_lab, 0, 255).astype(np.uint8)
+            return cv2.cvtColor(src_lab, cv2.COLOR_LAB2BGR)
+        except Exception:
+            return src
         if self.options.show_face_area_overlay:
             # Additional steps for green overlay
             green_overlay = np.zeros_like(target_img)
@@ -813,13 +910,24 @@ class ProcessMgr():
             # Get mouth landmarks (indices 52 to 71 typically represent the outer mouth)
             mouth_points = landmarks[52:71].astype(np.int32)
             
-            # Add padding to mouth area
             min_x, min_y = np.min(mouth_points, axis=0)
             max_x, max_y = np.max(mouth_points, axis=0)
-            min_x = max(0, min_x - (15*6))
-            min_y = max(0, min_y - 22)
-            max_x = min(frame.shape[1], max_x + (15*6))
-            max_y = min(frame.shape[0], max_y + (90*6))
+
+            # Pad proportionally to the mouth size rather than with fixed pixel
+            # amounts. The original used absolute paddings (up to +540px below the
+            # mouth) which, on small faces, grabbed the whole chin/neck and hurt
+            # both identity and expression restoration. Proportional padding keeps
+            # the region tight to the mouth at any face scale.
+            mouth_w = max(1, int(max_x - min_x))
+            mouth_h = max(1, int(max_y - min_y))
+            pad_x = int(mouth_w * 0.6)
+            pad_top = int(mouth_h * 0.6)
+            pad_bottom = int(mouth_h * 0.9)
+
+            min_x = max(0, min_x - pad_x)
+            min_y = max(0, min_y - pad_top)
+            max_x = min(frame.shape[1], max_x + pad_x)
+            max_y = min(frame.shape[0], max_y + pad_bottom)
             
             # Extract the mouth area from the frame using the calculated bounding box
             mouth_cutout = frame[min_y:max_y, min_x:max_x].copy()

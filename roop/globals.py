@@ -34,6 +34,23 @@ blend_ratio = 0.5
 distance_threshold = 0.65
 default_det_size = True
 
+# --- Accuracy / quality toggles (RunLeashed improvements) ---
+# Derive the 5 alignment keypoints from the stable 68-point landmark model
+# (instead of the detector's raw kps) and fit the warp with a RANSAC affine.
+# This is the main fix for "off" swaps at extreme yaw/pitch angles.
+use_landmark_alignment = True
+# Build the paste-back matte from the face convex hull (follows the face
+# contour) instead of a plain rectangle, removing jaw/neck/background bleed
+# at angled poses. Falls back to the rectangle if landmarks are unavailable.
+use_face_hull_mask = True
+# How far above the eyebrows to extend the hull to cover the forehead,
+# as a fraction of the chin->brow distance.
+face_hull_forehead = 0.6
+# Optional Reinhard (LAB) color transfer of the swapped face toward the
+# target region before paste-back. Off by default (inswapper already does
+# reasonable color); enable if source/target lighting differs a lot.
+use_color_transfer = False
+
 no_face_action = 0
 
 processing = False
