@@ -46,6 +46,10 @@ use_face_hull_mask = True
 # How far above the eyebrows to extend the hull to cover the forehead,
 # as a fraction of the chin->brow distance.
 face_hull_forehead = 0.6
+# Dilate the hull outward by this fraction of the crop size so the swapped
+# face fully covers the target (compensates the erosion in blur_area). Raise
+# if the swap looks smaller than the target; lower if it bleeds onto the neck.
+face_hull_dilate = 0.10
 # Optional Reinhard (LAB) color transfer of the swapped face toward the
 # target region before paste-back. Off by default (inswapper already does
 # reasonable color); enable if source/target lighting differs a lot.
@@ -65,6 +69,15 @@ multi_angle_angles = [90, 270, 180]
 landmark_smoothing = True
 landmark_smoothing_strength = 0.7
 force_landmark_smoothing = False
+
+# Faceset (multi-image source) identity averaging. 'robust' (default) drops
+# outlier uploads by cosine distance from the group's median embedding, then
+# takes a detector-confidence-weighted mean -> identity that resembles the real
+# source more closely. 'median' picks the single most-central face. 'mean' is
+# the old naive average. outlier_threshold: cosine distance cut for 'robust'
+# (lower = stricter; raise toward 1.0 to keep very different angles).
+faceset_average_mode = 'robust'
+faceset_outlier_threshold = 0.6
 
 no_face_action = 0
 

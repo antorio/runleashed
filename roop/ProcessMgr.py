@@ -751,6 +751,15 @@ class ProcessMgr():
             hull = cv2.convexHull(hull_pts)
             matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
             cv2.fillConvexPoly(matte, hull, 255)
+            # Dilate outward a little so the hull covers the whole face up to the
+            # jaw/hairline. Without this the hull sits slightly inside the skin
+            # and the later erosion in blur_area shrinks it further, making the
+            # swapped face look smaller than the target. Still contour-shaped, so
+            # it keeps trimming neck/background at extreme angles.
+            margin = int(max(crop_h, crop_w) * float(roop.globals.face_hull_dilate))
+            if margin > 0:
+                k = 2 * margin + 1
+                matte = cv2.dilate(matte, np.ones((k, k), np.uint8))
             return matte
         except Exception:
             return None
@@ -900,6 +909,10 @@ class ProcessMgr():
             swap_frame = (swap_frame * 127.5 + 127.5).round()
         else:
             swap_frame = (swap_frame * 255.0).round()
+        # inswapper (a GAN) can over/undershoot slightly outside [0,255]. Without
+        # clipping, the later .astype(uint8) WRAPS those values (e.g. -3 -> 253,
+        # 258 -> 2), peppering dark cavities (nostrils, mouth) with wrong pixels.
+        swap_frame = np.clip(swap_frame, 0.0, 255.0)
         swap_frame = swap_frame[:, :, ::-1]
         return swap_frame
 
