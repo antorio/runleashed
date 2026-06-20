@@ -253,3 +253,21 @@ def apply_stitching(session, kp_source, kp_driving, log=False, invert=True):
             new[:, :, 0] += flat[63]
             new[:, :, 1] += flat[64]
     return new
+
+
+def lock_pose(kp_driving, kp_source, scale_lock=True):
+    """Deterministic pose lock (no model). Re-centre (and optionally re-scale)
+    the driving keypoints so their GLOBAL position/scale match the source's,
+    leaving only the LOCAL expression deformation. This removes the head
+    shift / enlarge / drift the generator otherwise shows, without the
+    miscalibrated stitcher model."""
+    kd = np.asarray(kp_driving, dtype=np.float32).copy()
+    ks = np.asarray(kp_source, dtype=np.float32)
+    c_d = kd.mean(axis=1, keepdims=True)
+    c_s = ks.mean(axis=1, keepdims=True)
+    kd = kd - c_d + c_s                      # translation lock
+    if scale_lock:
+        s_d = float(np.sqrt(((kd - c_s) ** 2).sum())) + 1e-8
+        s_s = float(np.sqrt(((ks - c_s) ** 2).sum())) + 1e-8
+        kd = c_s + (kd - c_s) * (s_s / s_d)  # scale lock
+    return kd.astype(np.float32)

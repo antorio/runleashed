@@ -112,6 +112,11 @@ expression_stitching = False
 lp_crop_size = 512
 lp_crop_scale = 2.3
 lp_crop_vy = -0.125
+# Model-free pose lock for the expression restorer: re-centre (and re-scale)
+# driving keypoints to the source so only the local expression transfers and the
+# head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.
+expression_pose_lock = True
+expression_pose_lock_scale = True
 
 no_face_action = 0
 

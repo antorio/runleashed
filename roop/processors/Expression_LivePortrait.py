@@ -143,7 +143,7 @@ class Expression_LivePortrait():
             # Stitching locks the driving keypoints onto the source pose/position
             # so the generator does not drift / rotate the head (LivePortrait's
             # own fix for exactly that artefact).
-            if self.stitcher is not None and getattr(roop.globals, 'expression_stitching', True):
+            if self.stitcher is not None and getattr(roop.globals, 'expression_stitching', False):
                 try:
                     kp_driving = lpu.apply_stitching(
                         self.stitcher, kp_source, kp_driving,
@@ -152,6 +152,14 @@ class Expression_LivePortrait():
                     self._stitch_io_logged = True
                 except Exception:
                     pass
+
+            # Deterministic pose lock (model-free): keep the driving keypoints'
+            # global position/scale identical to the source so only the local
+            # expression transfers -- removes the head shift / enlarge / drift.
+            if getattr(roop.globals, 'expression_pose_lock', True):
+                kp_driving = lpu.lock_pose(
+                    kp_driving, kp_source,
+                    scale_lock=getattr(roop.globals, 'expression_pose_lock_scale', True))
 
             g_in = self.generator.get_inputs()
             if not getattr(self, '_gen_io_logged', False):
