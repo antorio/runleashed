@@ -86,6 +86,9 @@ expression_restorer_factor = 80     # 0-100 -> blend amount
 expression_restore_eyes = True
 expression_restore_mouth = True
 expression_restore_brows = True
+# 0 = no clamp (let the full target expression through). Set ~0.1 to gently
+# clamp if very strong expressions ever cause artifacts.
+expression_clamp = 0.0
 
 no_face_action = 0
 
@@ -118,3 +121,10 @@ profile_timings = True
 # conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is
 # tight. 'HEURISTIC' avoids that long search at a negligible quality cost.
 cudnn_conv_algo_search = 'HEURISTIC'
+
+# Preview delivery: the Gradio preview image is sent to the browser (often over a
+# slow gradio.live share tunnel) as a full-resolution PNG, which can take a long
+# time to appear even though the swap compute is fast. For the PREVIEW ONLY we
+# downscale to this max height and let Gradio encode it as JPEG. Final renders are
+# unaffected. Raise this if you want a sharper (but slower-to-load) preview.
+preview_max_height = 720

@@ -151,7 +151,7 @@ def faceswap_tab():
                     forced_fps = gr.Slider(minimum=0, maximum=120, value=0, label="Video FPS", info='Overrides detected fps if not 0', step=1.0, interactive=True, container=True)
 
             with gr.Column(scale=2):
-                previewimage = gr.Image(label="Preview Image", height=576, interactive=False, visible=True, format=get_gradio_output_format())
+                previewimage = gr.Image(label="Preview Image", height=576, interactive=False, visible=True, format="jpeg")
                 maskimage = gr.ImageEditor(label="Manual mask Image", sources=["clipboard"], transforms="", type="numpy",
                                              brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)
                 with gr.Row(variant='panel'):
@@ -598,7 +598,7 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
         layers = maskimage["layers"]
 
     if not fake_preview or len(roop.globals.INPUT_FACESETS) < 1:
-        return gr.Image(value=util.convert_to_gradio(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
+        return gr.Image(value=util.convert_to_gradio_preview(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
     roop.globals.face_swap_mode = translate_swap_mode(detection)
     roop.globals.selected_enhancer = enhancer
@@ -624,7 +624,7 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     current_frame = live_swap(current_frame, options)
     if current_frame is None:
         return gr.Image(visible=True), None, gr.Slider(info=timeinfo)
-    return gr.Image(value=util.convert_to_gradio(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
+    return gr.Image(value=util.convert_to_gradio_preview(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
 def map_mask_engine(selected_mask_engine, clip_text):
     if selected_mask_engine == "Clip2Seg":

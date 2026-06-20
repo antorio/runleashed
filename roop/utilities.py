@@ -58,6 +58,24 @@ def convert_to_gradio(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
+def convert_to_gradio_preview(image):
+    """Like convert_to_gradio, but downscales large frames to roop.globals.
+    preview_max_height first. This shrinks the payload Gradio must send to the
+    browser (especially over a gradio.live share tunnel), so the preview appears
+    quickly. Preview only -- final renders are produced from the full-res frame.
+    """
+    if image is None:
+        return None
+    import roop.globals
+    max_h = int(getattr(roop.globals, 'preview_max_height', 720) or 0)
+    h = image.shape[0]
+    if max_h > 0 and h > max_h:
+        scale = max_h / float(h)
+        new_w = max(1, int(round(image.shape[1] * scale)))
+        image = cv2.resize(image, (new_w, max_h), interpolation=cv2.INTER_AREA)
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+
 def sort_filenames_ignore_path(filenames):
     """Sorts a list of filenames containing a complete path by their filename,
     while retaining their original path.

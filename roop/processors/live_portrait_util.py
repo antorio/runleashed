@@ -13,10 +13,18 @@ import cv2
 
 PI = np.pi
 
-# Expression clamp range (FaceFusion limit_expression). Empirically chosen to
-# stop the implicit keypoints from drifting into artifacts.
-EXPRESSION_MIN = -2.8e-2
-EXPRESSION_MAX = 2.8e-2
+# Expression clamp range. The previous flat +/-0.028 squashed strong driving
+# expressions (e.g. a wide-open mouth) down to almost nothing, which is why the
+# restorer looked like a near no-op. The clamp magnitude is now controlled by
+# roop.globals.expression_clamp; 0 (default) disables clamping so the target
+# expression passes through in full. A small positive value (e.g. 0.1) re-enables
+# a gentle clamp if strong expressions ever cause artifacts.
+def _clamp_mag():
+    import roop.globals
+    try:
+        return float(getattr(roop.globals, 'expression_clamp', 0.0) or 0.0)
+    except Exception:
+        return 0.0
 
 # Semantic groups within LivePortrait's 21 implicit keypoints (0-indexed).
 # These index sets are the de-facto mapping used across the LivePortrait
@@ -72,7 +80,10 @@ def get_rotation_matrix(pitch_, yaw_, roll_):
 
 
 def limit_expression(expression):
-    return np.clip(expression, EXPRESSION_MIN, EXPRESSION_MAX)
+    mag = _clamp_mag()
+    if mag <= 0.0:
+        return expression
+    return np.clip(expression, -mag, mag)
 
 
 def transform_motion_points(motion_points, rotation, expression, scale, translation):

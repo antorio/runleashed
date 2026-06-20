@@ -103,14 +103,42 @@ class Expression_LivePortrait():
                 motion_points, rotation, applied, scale, translation)
 
             g_in = self.generator.get_inputs()
-            # FaceFusion order: forward_generate_frame(feature_volume,
-            # target_motion_points, temp_motion_points). So input[1] = driving
-            # (restored expression), input[2] = source (the swapped face's own).
-            feeds = {
-                g_in[0].name: np.ascontiguousarray(feature_volume, dtype=np.float32),
-                g_in[1].name: np.ascontiguousarray(kp_driving, dtype=np.float32),
-                g_in[2].name: np.ascontiguousarray(kp_source, dtype=np.float32),
-            }
+            if not getattr(self, '_gen_io_logged', False):
+                try:
+                    info = [(i.name, i.shape) for i in g_in]
+                    print(f"[Expression_LivePortrait] generator inputs (name, shape) = {info}")
+                except Exception:
+                    pass
+                self._gen_io_logged = True
+
+            # Map by NAME when the export labels them (robust to input order),
+            # else fall back to KwaiVGI's positional order for the warping net:
+            # Warping(feature_3d, kp_driving, kp_source)  (see LivePortrait speed.py).
+            feeds = {}
+            feature_name = None
+            kp_inputs = []
+            for i in g_in:
+                nm = i.name.lower()
+                shp = i.shape
+                if ('feature' in nm) or ('3d' in nm) or (isinstance(shp, (list, tuple)) and len(shp) == 5):
+                    feature_name = i.name
+                else:
+                    kp_inputs.append(i.name)
+            if feature_name is None:
+                feature_name = g_in[0].name
+                kp_inputs = [g_in[1].name, g_in[2].name]
+
+            feeds[feature_name] = np.ascontiguousarray(feature_volume, dtype=np.float32)
+
+            driving_name = next((n for n in kp_inputs if 'driv' in n.lower()), None)
+            source_name = next((n for n in kp_inputs if 'sourc' in n.lower() or n.lower().endswith('_s')), None)
+            if driving_name and source_name:
+                feeds[driving_name] = np.ascontiguousarray(kp_driving, dtype=np.float32)
+                feeds[source_name] = np.ascontiguousarray(kp_source, dtype=np.float32)
+            else:
+                # positional fallback: (feature, kp_driving, kp_source)
+                feeds[kp_inputs[0]] = np.ascontiguousarray(kp_driving, dtype=np.float32)
+                feeds[kp_inputs[1]] = np.ascontiguousarray(kp_source, dtype=np.float32)
             gen_out = self._run_session(self.generator, feeds)[0]
 
             restored = lpu.parse_output(gen_out)
