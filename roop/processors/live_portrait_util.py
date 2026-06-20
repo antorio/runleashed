@@ -114,7 +114,13 @@ def build_applied_expression(temp_exp, target_exp, factor, use_eyes, use_mouth, 
     """
     temp = temp_exp.reshape(1, -1, 3).astype(np.float32)
     targ = target_exp.reshape(1, -1, 3).astype(np.float32)
-    blended = targ * float(factor) + temp * (1.0 - float(factor))
+    # blend as: source + (target - source) * factor * power.
+    # `power` (roop.globals.expression_power) lets you over-drive subtle
+    # expressions so they become clearly visible; 1.0 = natural target amount.
+    import roop.globals
+    power = float(getattr(roop.globals, 'expression_power', 1.0) or 1.0)
+    amt = float(factor) * power
+    blended = temp + (targ - temp) * amt
 
     n = blended.shape[1]
 

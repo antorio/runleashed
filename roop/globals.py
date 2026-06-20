@@ -89,6 +89,9 @@ expression_restore_brows = True
 # 0 = no clamp (let the full target expression through). Set ~0.1 to gently
 # clamp if very strong expressions ever cause artifacts.
 expression_clamp = 0.0
+# Amplify the driving expression delta. 1.0 = natural target amount; try 2.0-3.0
+# to make subtle expressions clearly visible (may add artifacts if pushed high).
+expression_power = 1.0
 
 no_face_action = 0
 

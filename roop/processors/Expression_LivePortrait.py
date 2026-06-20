@@ -151,6 +151,17 @@ class Expression_LivePortrait():
             gen_out = self._run_session(self.generator, feeds)[0]
 
             restored = lpu.parse_output(gen_out)
+            if getattr(roop.globals, 'profile_timings', False):
+                try:
+                    ed = float(np.max(np.abs(target_exp.reshape(-1) - temp_exp.reshape(-1))))
+                    em = float(np.mean(np.abs(target_exp.reshape(-1) - temp_exp.reshape(-1))))
+                    kd = float(np.max(np.abs(kp_driving.reshape(-1) - kp_source.reshape(-1))))
+                    sw = cv2.resize(swapped_crop, (restored.shape[1], restored.shape[0])) if restored.shape[:2] != swapped_crop.shape[:2] else swapped_crop
+                    od = float(np.mean(np.abs(restored.astype(np.float32) - sw.astype(np.float32))))
+                    print(f"[expr-delta] exp|max={ed:.4f} mean={em:.4f}  kp|max={kd:.4f}  "
+                          f"out|mean_px_change={od:.2f}  factor={factor:.2f}")
+                except Exception:
+                    pass
             if (restored.shape[1], restored.shape[0]) != (swapped_crop.shape[1], swapped_crop.shape[0]):
                 restored = cv2.resize(
                     restored, (swapped_crop.shape[1], swapped_crop.shape[0]),
