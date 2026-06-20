@@ -108,7 +108,7 @@ expression_blend_border = 0.2
 # forehead) from the full frame + use the stitching model to lock pose. This is
 # the precise path. Set False to fall back to the in-place arcface-crop method.
 expression_full_pipeline = False
-expression_stitching = True
+expression_stitching = False
 lp_crop_size = 512
 lp_crop_scale = 2.3
 lp_crop_vy = -0.125
