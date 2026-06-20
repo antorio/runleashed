@@ -212,11 +212,16 @@ def compose_affine(A, B):
     return (A3 @ B3)[:2].astype(np.float32)
 
 
-def apply_stitching(session, kp_source, kp_driving, log=False):
+def apply_stitching(session, kp_source, kp_driving, log=False, invert=True):
     """Run the LivePortrait stitching net to lock the driving keypoints onto the
     source pose/position (removes the global drift / 'rotation' the generator
     introduces). Handles both ONNX variants: one that returns the corrected
-    kp_driving directly, and one that returns a delta (63 or 65 dims)."""
+    kp_driving directly, and one that returns a delta (63 or 65 dims).
+
+    `invert` mirrors the generator's verified convention: this FaceFusion export
+    labels the expression-donor keypoints 'source' and the edited face 'target',
+    which is opposite to the intuitive naming, so with invert=True we feed
+    'source'<-kp_driving and 'target'<-kp_source."""
     names = [i.name for i in session.get_inputs()]
     if log:
         try:
@@ -227,13 +232,16 @@ def apply_stitching(session, kp_source, kp_driving, log=False):
     ks = np.ascontiguousarray(kp_source, dtype=np.float32)
     kd = np.ascontiguousarray(kp_driving, dtype=np.float32)
     s_in = next((n for n in names if 'sourc' in n.lower()), None)
-    d_in = next((n for n in names if 'driv' in n.lower()), None)
-    if s_in and d_in:
-        feed = {s_in: ks, d_in: kd}
+    t_in = next((n for n in names if 'targ' in n.lower() or 'driv' in n.lower()), None)
+    if s_in and t_in and s_in != t_in:
+        if invert:
+            feed = {s_in: kd, t_in: ks}     # 'source'<-driving, 'target'<-source
+        else:
+            feed = {s_in: ks, t_in: kd}
     elif len(names) == 1:
         feed = {names[0]: np.concatenate([ks.reshape(1, -1), kd.reshape(1, -1)], axis=1)}
     else:
-        feed = {names[0]: ks, names[1]: kd}
+        feed = {names[0]: kd, names[1]: ks} if invert else {names[0]: ks, names[1]: kd}
     out = np.asarray(session.run(None, feed)[0], dtype=np.float32)
     if out.ndim == 3 and out.shape[-1] == 3:
         return out                      # already the corrected kp_driving

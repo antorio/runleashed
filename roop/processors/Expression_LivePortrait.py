@@ -147,7 +147,8 @@ class Expression_LivePortrait():
                 try:
                     kp_driving = lpu.apply_stitching(
                         self.stitcher, kp_source, kp_driving,
-                        log=not getattr(self, '_stitch_io_logged', False))
+                        log=not getattr(self, '_stitch_io_logged', False),
+                        invert=getattr(roop.globals, 'expression_invert_direction', True))
                     self._stitch_io_logged = True
                 except Exception:
                     pass
