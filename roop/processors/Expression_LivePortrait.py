@@ -130,9 +130,18 @@ class Expression_LivePortrait():
 
             feeds[feature_name] = np.ascontiguousarray(feature_volume, dtype=np.float32)
 
-            driving_name = next((n for n in kp_inputs if 'driv' in n.lower()), None)
-            source_name = next((n for n in kp_inputs if 'sourc' in n.lower() or n.lower().endswith('_s')), None)
-            if driving_name and source_name:
+            # The FaceFusion live_portrait_generator.onnx names its keypoint
+            # inputs 'source' and 'target' (confirmed from the model): 'source'
+            # takes the swapped face's own keypoints, 'target' takes the keypoints
+            # carrying the expression we want to apply (the driving). Match those
+            # names; earlier code only looked for 'driv' and silently fell back to
+            # an INVERTED positional mapping, which warped the wrong direction and
+            # made the restorer look like a near no-op.
+            driving_name = next((n for n in kp_inputs
+                                 if any(k in n.lower() for k in ('driv', 'target', 'targ'))), None)
+            source_name = next((n for n in kp_inputs
+                                if any(k in n.lower() for k in ('sourc', '_s', 'temp'))), None)
+            if driving_name and source_name and driving_name != source_name:
                 feeds[driving_name] = np.ascontiguousarray(kp_driving, dtype=np.float32)
                 feeds[source_name] = np.ascontiguousarray(kp_source, dtype=np.float32)
             else:
