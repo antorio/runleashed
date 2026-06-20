@@ -39,7 +39,10 @@ class Expression_LivePortrait():
         if not os.path.exists(path):
             return None
         onnxruntime.set_default_logger_severity(3)
-        return onnxruntime.InferenceSession(path, None, providers=roop.globals.execution_providers)
+        from roop.utilities import tuned_execution_providers
+        provs = tuned_execution_providers()
+        print(f"[load] Creating LivePortrait '{name}' session  providers={provs}")
+        return onnxruntime.InferenceSession(path, None, providers=provs)
 
     def Initialize(self, plugin_options: dict):
         if self.plugin_options is not None:

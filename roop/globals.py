@@ -107,3 +107,14 @@ BATCH_IMAGE_CHAIN_PROCESSOR = None
 CFG: Settings = None
 
 
+
+# --- Diagnostics & onnxruntime CUDA tuning (added for slowness investigation) ---
+# When True, prints per-stage timing for each processed/preview frame and logs
+# every time a model session is (re)created. This is how we find out whether the
+# slowness is a per-frame model reload or slow inference. Set False once diagnosed.
+profile_timings = True
+# onnxruntime CUDA convolution algo search. The onnxruntime default is
+# 'EXHAUSTIVE', which can take a very long time on the first inference of large
+# conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is
+# tight. 'HEURISTIC' avoids that long search at a negligible quality cost.
+cudnn_conv_algo_search = 'HEURISTIC'

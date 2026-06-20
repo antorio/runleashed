@@ -391,3 +391,26 @@ def shuffle_array(arr):
   for i in range(len(arr) - 1, 0, -1):
     j = random.randint(0, i)
     arr[i], arr[j] = arr[j], arr[i]
+
+
+def tuned_execution_providers():
+    """Return roop.globals.execution_providers with cuDNN/arena options merged
+    into the CUDA provider, to avoid onnxruntime's slow EXHAUSTIVE conv-algo
+    search and aggressive arena growth. Safe for non-CUDA providers (returned
+    unchanged)."""
+    import roop.globals
+    provs = roop.globals.execution_providers or []
+    search = getattr(roop.globals, 'cudnn_conv_algo_search', 'HEURISTIC')
+    out = []
+    for p in provs:
+        if isinstance(p, (tuple, list)) and len(p) == 2 and 'CUDA' in str(p[0]):
+            opts = dict(p[1]) if isinstance(p[1], dict) else {}
+            opts.setdefault('cudnn_conv_algo_search', search)
+            opts.setdefault('arena_extend_strategy', 'kSameAsRequested')
+            out.append((p[0], opts))
+        elif isinstance(p, str) and 'CUDA' in p:
+            out.append((p, {'cudnn_conv_algo_search': search,
+                            'arena_extend_strategy': 'kSameAsRequested'}))
+        else:
+            out.append(p)
+    return out

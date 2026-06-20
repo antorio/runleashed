@@ -33,8 +33,11 @@ def get_face_analyser() -> Any:
                     root=model_path, providers=["CPUExecutionProvider"],allowed_modules=allowed_modules
                 )
             else:
+                from roop.utilities import tuned_execution_providers
+                provs = tuned_execution_providers()
+                print(f"[load] Building buffalo_l face analyser  modules={allowed_modules}  providers={provs}")
                 FACE_ANALYSER = insightface.app.FaceAnalysis(
-                    name="buffalo_l", root=model_path, providers=roop.globals.execution_providers,allowed_modules=allowed_modules
+                    name="buffalo_l", root=model_path, providers=provs,allowed_modules=allowed_modules
                 )
             FACE_ANALYSER.prepare(
                 ctx_id=0,

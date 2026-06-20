@@ -43,3 +43,32 @@ mewarp ke arah ekspresi source -> hasil nyaris tak berubah ("identical").
   translation,exp,motion_points] (sesuai FaceFusion). Jika ekspresi aneh, ini
   titik pertama yang dicek (traceback sekarang vokal akan membantu).
 - Indeks keypoint area (Eyes/Mouth/Brows) empiris; semua-on = restore penuh.
+
+---
+
+# TAHAP 7 - Perbaikan LELET preview (2-3 menit/frame) + diagnostik
+
+## Akar masalah (dikonfirmasi dari console L4 user)
+onnxruntime CUDA memakai default `cudnn_conv_algo_search=EXHAUSTIVE`, yang
+mem-benchmark SEMUA algoritma konvolusi cuDNN untuk setiap bentuk input baru
+(di-cache per-bentuk). Dengan detektor `det_10g.onnx` ber-input dinamis
+`[1,3,?,?]` dan generator LivePortrait yang besar, pencarian ini berulang dan
+menyebabkan stall menit-an per frame. Model TIDAK reload per-frame (terverifikasi).
+
+## Perbaikan
+- `roop/utilities.py`: `tuned_execution_providers()` menyuntik
+  `cudnn_conv_algo_search='HEURISTIC'` + `arena_extend_strategy='kSameAsRequested'`
+  ke entry CUDA provider (aman untuk CPU-only).
+- Dipakai di: `get_face_analyser` (buffalo_l), `FaceSwapInsightFace.Initialize`
+  (inswapper), `Expression_LivePortrait._load` (3 model LP). insightface 0.7.3
+  terbukti meneruskan provider_options -> buffalo_l ikut ter-tune.
+- `roop/globals.py`: `cudnn_conv_algo_search='HEURISTIC'`, `profile_timings=True`.
+- Logging `[load]` (saat session dibuat; harus 1x/sesi) dan `[timing]` (detect /
+  swap+paste / per-processor) untuk verifikasi & diagnosa lanjutan.
+- det_size tetap (640,640): SCRFD letterbox ke kanvas tetap -> blob detektor
+  selalu (1,3,640,640), tak ada churn bentuk walau multi-angle merotasi frame.
+
+## Catatan
+- Set `profile_timings=False` di globals untuk render video panjang (kurangi spam).
+- Blur expression: set "Subsample upscale to"=512px saat pakai expression restorer
+  (LP terima crop hi-res, output tak dikecilkan ke 128).

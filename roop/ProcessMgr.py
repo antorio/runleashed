@@ -433,9 +433,15 @@ class ProcessMgr():
         angles = roop.globals.multi_angle_angles
 
         if self.options.swap_mode == "first":
+            import time as _t
+            _prof = getattr(roop.globals, 'profile_timings', False)
+            _t0 = _t.perf_counter()
             face = get_first_face_multi(frame, mode=mode, angles=angles)
+            _t1 = _t.perf_counter()
 
             if face is None:
+                if _prof:
+                    print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
                 return num_faces_found, frame
 
             if smoothing_on:
@@ -443,6 +449,10 @@ class ProcessMgr():
 
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
+            if _prof:
+                _t2 = _t.perf_counter()
+                print(f"[timing] detect={(_t1-_t0)*1000:.0f}ms  swap+paste={(_t2-_t1)*1000:.0f}ms  "
+                      f"frame={frame.shape[1]}x{frame.shape[0]}  subsample={roop.globals.subsample_size}")
             del face
 
         else:
@@ -652,7 +662,10 @@ class ProcessMgr():
         fake_frame = aligned_img
         target_face.matrix = M
 
+        import time as _pt
+        _prof = getattr(roop.globals, 'profile_timings', False)
         for p in self.processors:
+            _ps = _pt.perf_counter()
             if p.type == 'swap':
                 swap_result_frames = []
                 subsample_frames = self.implode_pixel_boost(aligned_img, model_output_size, subsample_total)
@@ -671,6 +684,8 @@ class ProcessMgr():
                 fake_frame = self.process_expression(p, aligned_img, fake_frame)
             else:
                 enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, fake_frame)
+            if _prof:
+                print(f"[timing]    processor '{p.processorname}' ({p.type}) = {(_pt.perf_counter()-_ps)*1000:.0f}ms")
 
         upscale = 512
         orig_width = fake_frame.shape[1]
