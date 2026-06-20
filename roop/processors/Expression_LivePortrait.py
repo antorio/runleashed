@@ -18,6 +18,7 @@ MODELS = {
     'feature_extractor': 'live_portrait_feature_extractor.onnx',
     'motion_extractor':  'live_portrait_motion_extractor.onnx',
     'generator':         'live_portrait_generator.onnx',
+    'stitcher':          'live_portrait_stitcher.onnx',
 }
 
 
@@ -27,6 +28,7 @@ class Expression_LivePortrait():
     feature_extractor = None
     motion_extractor = None
     generator = None
+    stitcher = None
     devicename = 'cpu'
 
     processorname = 'expression_restorer'
@@ -53,6 +55,7 @@ class Expression_LivePortrait():
             self.feature_extractor = self._load('feature_extractor')
             self.motion_extractor = self._load('motion_extractor')
             self.generator = self._load('generator')
+            self.stitcher = self._load('stitcher')  # optional: locks pose (no drift)
             if None in (self.feature_extractor, self.motion_extractor, self.generator):
                 print("[Expression_LivePortrait] LivePortrait models not found in "
                       "./models/liveportrait/. Expression restore will be a no-op.")
@@ -71,7 +74,8 @@ class Expression_LivePortrait():
         return pitch, yaw, roll, scale, translation, expression, motion_points
 
     def Run(self, target_crop: Frame, swapped_crop: Frame,
-            factor: float, use_eyes: bool, use_mouth: bool, use_brows: bool) -> Frame:
+            factor: float, use_eyes: bool, use_mouth: bool, use_brows: bool,
+            context=None) -> Frame:
         # Safety / no-op short circuits
         if None in (self.feature_extractor, self.motion_extractor, self.generator):
             return swapped_crop
@@ -79,8 +83,42 @@ class Expression_LivePortrait():
             return swapped_crop
 
         try:
-            src = lpu.prepare_crop(swapped_crop, 256)   # appearance + source motion
-            drv = lpu.prepare_crop(target_crop, 256)    # driving expression
+            # ---- Full LivePortrait pipeline: crop the face the way LivePortrait
+            # expects (wider framing incl. forehead) from the FULL frame, instead
+            # of the tight arcface crop. This is what makes the expression precise.
+            full = (getattr(roop.globals, 'expression_full_pipeline', True)
+                    and context is not None and context.get('frame') is not None
+                    and context.get('landmarks') is not None
+                    and context.get('M') is not None)
+            back_M = None
+            if full:
+                try:
+                    frame = context['frame']
+                    M_arc = np.asarray(context['M'], dtype=np.float32)
+                    H, W = frame.shape[:2]
+                    dsize = int(getattr(roop.globals, 'lp_crop_size', 512))
+                    M_lp = lpu.lp_crop_matrix(
+                        context['landmarks'], dsize=dsize,
+                        scale=float(getattr(roop.globals, 'lp_crop_scale', 2.3)),
+                        vy_ratio=float(getattr(roop.globals, 'lp_crop_vy', -0.125)))
+                    # rebuild the swapped frame (paste the arcface swapped crop back)
+                    invM = cv2.invertAffineTransform(M_arc)
+                    face_full = cv2.warpAffine(swapped_crop, invM, (W, H))
+                    mask_full = cv2.warpAffine(
+                        np.full(swapped_crop.shape[:2], 255, np.uint8), invM, (W, H))
+                    swapped_frame = frame.copy()
+                    swapped_frame[mask_full > 0] = face_full[mask_full > 0]
+                    source_img = cv2.warpAffine(swapped_frame, M_lp, (dsize, dsize))
+                    driving_img = cv2.warpAffine(frame, M_lp, (dsize, dsize))
+                    back_M = lpu.compose_affine(M_arc, cv2.invertAffineTransform(M_lp))
+                except Exception:
+                    full = False
+            if not full:
+                source_img = swapped_crop
+                driving_img = target_crop
+
+            src = lpu.prepare_crop(source_img, 256)   # appearance + source motion
+            drv = lpu.prepare_crop(driving_img, 256)  # driving expression
 
             f_name = self.feature_extractor.get_inputs()[0].name
             feature_volume = self._run_session(self.feature_extractor, {f_name: src})[0]
@@ -102,6 +140,18 @@ class Expression_LivePortrait():
             kp_driving = lpu.transform_motion_points(
                 motion_points, rotation, applied, scale, translation)
 
+            # Stitching locks the driving keypoints onto the source pose/position
+            # so the generator does not drift / rotate the head (LivePortrait's
+            # own fix for exactly that artefact).
+            if self.stitcher is not None and getattr(roop.globals, 'expression_stitching', True):
+                try:
+                    kp_driving = lpu.apply_stitching(
+                        self.stitcher, kp_source, kp_driving,
+                        log=not getattr(self, '_stitch_io_logged', False))
+                    self._stitch_io_logged = True
+                except Exception:
+                    pass
+
             g_in = self.generator.get_inputs()
             if not getattr(self, '_gen_io_logged', False):
                 try:
@@ -111,9 +161,6 @@ class Expression_LivePortrait():
                     pass
                 self._gen_io_logged = True
 
-            # Map by NAME when the export labels them (robust to input order),
-            # else fall back to KwaiVGI's positional order for the warping net:
-            # Warping(feature_3d, kp_driving, kp_source)  (see LivePortrait speed.py).
             feeds = {}
             feature_name = None
             kp_inputs = []
@@ -130,12 +177,8 @@ class Expression_LivePortrait():
 
             feeds[feature_name] = np.ascontiguousarray(feature_volume, dtype=np.float32)
 
-            # Empirical ground truth (from on-GPU testing): this FaceFusion
-            # generator inverts expression if fed the "intuitive" way. To make the
-            # swapped face ADOPT the target's expression (target opens mouth ->
-            # result opens mouth), the DRIVING (target-expression) keypoints must
-            # go to the input named 'source', and the swapped face's OWN keypoints
-            # go to 'target'. (The names are opposite to their effect here.)
+            # 'source' input <- driving (target expr), 'target' input <- source
+            # (verified on-GPU: this generator's names are opposite to their effect).
             src_in = next((n for n in kp_inputs if 'sourc' in n.lower()), kp_inputs[0])
             tgt_in = next((n for n in kp_inputs if ('targ' in n.lower() or 'driv' in n.lower())), kp_inputs[-1])
             if src_in == tgt_in and len(kp_inputs) >= 2:
@@ -152,20 +195,23 @@ class Expression_LivePortrait():
             if getattr(roop.globals, 'profile_timings', False):
                 try:
                     ed = float(np.max(np.abs(target_exp.reshape(-1) - temp_exp.reshape(-1))))
-                    em = float(np.mean(np.abs(target_exp.reshape(-1) - temp_exp.reshape(-1))))
                     kd = float(np.max(np.abs(kp_driving.reshape(-1) - kp_source.reshape(-1))))
-                    sw = cv2.resize(swapped_crop, (restored.shape[1], restored.shape[0])) if restored.shape[:2] != swapped_crop.shape[:2] else swapped_crop
-                    od = float(np.mean(np.abs(restored.astype(np.float32) - sw.astype(np.float32))))
-                    print(f"[expr-delta] exp|max={ed:.4f} mean={em:.4f}  kp|max={kd:.4f}  "
-                          f"out|mean_px_change={od:.2f}  factor={factor:.2f}")
+                    print(f"[expr-delta] exp|max={ed:.4f}  kp|max={kd:.4f}  "
+                          f"full_pipeline={full}  stitch={self.stitcher is not None}  factor={factor:.2f}")
                 except Exception:
                     pass
-            if (restored.shape[1], restored.shape[0]) != (swapped_crop.shape[1], swapped_crop.shape[0]):
+
+            # Paste the 512 result back into the arcface crop space (full pipeline)
+            # or just resize (fallback), then feather so borders stay clean.
+            if full and back_M is not None:
+                restored = cv2.warpAffine(
+                    restored, back_M,
+                    (swapped_crop.shape[1], swapped_crop.shape[0]),
+                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            elif (restored.shape[1], restored.shape[0]) != (swapped_crop.shape[1], swapped_crop.shape[0]):
                 restored = cv2.resize(
                     restored, (swapped_crop.shape[1], swapped_crop.shape[0]),
                     interpolation=cv2.INTER_AREA)
-            # Keep the LP expression in the centre, take borders from the aligned
-            # swapped face so edges never cut off / ghost.
             border = float(getattr(roop.globals, 'expression_blend_border', 0.2))
             if border > 0:
                 restored = lpu.feather_blend(restored, swapped_crop, border=border)

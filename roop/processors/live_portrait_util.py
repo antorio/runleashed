@@ -183,3 +183,65 @@ def feather_blend(fg, bg, border=0.2):
     m = m * m * m * (m * (m * 6 - 15) + 10)
     m = m[..., None]
     return (fg.astype(_np.float32) * m + bg.astype(_np.float32) * (1.0 - m)).astype(_np.uint8)
+
+
+def lp_crop_matrix(landmarks_2d, dsize=512, scale=2.3, vy_ratio=-0.125):
+    """LivePortrait-style upright crop transform (frame -> dsize x dsize).
+    Centres on the landmark bbox, scales so the face fills the crop with the
+    standard LivePortrait framing, and shifts up (vy_ratio<0) to include the
+    forehead. Returns a 2x3 affine. This is the crop the motion/feature
+    extractors were trained for -- far better than the tight arcface crop."""
+    pts = np.asarray(landmarks_2d, dtype=np.float32)[:, :2]
+    x_min, y_min = pts.min(0)
+    x_max, y_max = pts.max(0)
+    cx = (x_min + x_max) * 0.5
+    cy = (y_min + y_max) * 0.5
+    size = max(float(x_max - x_min), float(y_max - y_min)) * float(scale)
+    if size < 1e-3:
+        size = 1.0
+    cy += size * float(vy_ratio)
+    s = float(dsize) / size
+    return np.array([[s, 0.0, dsize * 0.5 - s * cx],
+                     [0.0, s, dsize * 0.5 - s * cy]], dtype=np.float32)
+
+
+def compose_affine(A, B):
+    """2x3 affine equivalent to applying B first, then A  (A o B)."""
+    A3 = np.vstack([np.asarray(A, np.float32), [0, 0, 1]])
+    B3 = np.vstack([np.asarray(B, np.float32), [0, 0, 1]])
+    return (A3 @ B3)[:2].astype(np.float32)
+
+
+def apply_stitching(session, kp_source, kp_driving, log=False):
+    """Run the LivePortrait stitching net to lock the driving keypoints onto the
+    source pose/position (removes the global drift / 'rotation' the generator
+    introduces). Handles both ONNX variants: one that returns the corrected
+    kp_driving directly, and one that returns a delta (63 or 65 dims)."""
+    names = [i.name for i in session.get_inputs()]
+    if log:
+        try:
+            oinfo = [(o.name, o.shape) for o in session.get_outputs()]
+            print(f"[Expression_LivePortrait] stitcher inputs={names} outputs={oinfo}")
+        except Exception:
+            pass
+    ks = np.ascontiguousarray(kp_source, dtype=np.float32)
+    kd = np.ascontiguousarray(kp_driving, dtype=np.float32)
+    s_in = next((n for n in names if 'sourc' in n.lower()), None)
+    d_in = next((n for n in names if 'driv' in n.lower()), None)
+    if s_in and d_in:
+        feed = {s_in: ks, d_in: kd}
+    elif len(names) == 1:
+        feed = {names[0]: np.concatenate([ks.reshape(1, -1), kd.reshape(1, -1)], axis=1)}
+    else:
+        feed = {names[0]: ks, names[1]: kd}
+    out = np.asarray(session.run(None, feed)[0], dtype=np.float32)
+    if out.ndim == 3 and out.shape[-1] == 3:
+        return out                      # already the corrected kp_driving
+    flat = out.reshape(-1)
+    new = kd.copy()
+    if flat.size >= 63:
+        new = kd + flat[:63].reshape(1, 21, 3)
+        if flat.size >= 65:
+            new[:, :, 0] += flat[63]
+            new[:, :, 1] += flat[64]
+    return new

@@ -147,6 +147,7 @@ def pre_check() -> bool:
     util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_feature_extractor.onnx'])
     util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_motion_extractor.onnx'])
     util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_generator.onnx'])
+    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_stitcher.onnx'])
     download_directory_path = util.resolve_relative_path('../models/CLIP')
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/rd64-uni-refined.pth'])
     download_directory_path = util.resolve_relative_path('../models/CodeFormer')

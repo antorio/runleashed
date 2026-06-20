@@ -681,7 +681,7 @@ class ProcessMgr():
             elif p.type == 'mask':
                 fake_frame = self.process_mask(p, aligned_img, fake_frame)
             elif p.type == 'expression':
-                fake_frame = self.process_expression(p, aligned_img, fake_frame)
+                fake_frame = self.process_expression(p, aligned_img, fake_frame, frame, target_face)
             else:
                 enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, fake_frame)
             if _prof:
@@ -964,15 +964,27 @@ class ProcessMgr():
         final_frame = final_frame.transpose(2, 0, 3, 1, 4).reshape(pixel_boost_size, pixel_boost_size, 3)
         return final_frame
 
-    def process_expression(self, processor, aligned_img:Frame, fake_frame:Frame):
+    def process_expression(self, processor, aligned_img:Frame, fake_frame:Frame,
+                           frame:Frame=None, target_face=None):
         # aligned_img = original target crop (real expression -> driving)
         # fake_frame  = swapped crop (appearance/identity to keep)
         factor = float(np.interp(float(roop.globals.expression_restorer_factor), [0, 100], [0.0, 1.0]))
+        context = None
+        if frame is not None and target_face is not None:
+            lmk = getattr(target_face, 'landmark_2d_106', None)
+            if lmk is None:
+                lmk = getattr(target_face, 'landmark_3d_68', None)
+            context = {
+                'frame': frame,
+                'landmarks': lmk,
+                'M': getattr(target_face, 'matrix', None),
+            }
         restored = processor.Run(
             aligned_img, fake_frame, factor,
             roop.globals.expression_restore_eyes,
             roop.globals.expression_restore_mouth,
             roop.globals.expression_restore_brows,
+            context,
         )
         return restored
 

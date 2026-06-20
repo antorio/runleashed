@@ -104,6 +104,14 @@ expression_invert_direction = True
 # the LivePortrait result fades into the aligned swapped face. Keeps edges clean
 # (no 'half face'). 0 disables. 0.2 default.
 expression_blend_border = 0.2
+# Full LivePortrait pipeline: crop the face the LivePortrait way (wider, incl.
+# forehead) from the full frame + use the stitching model to lock pose. This is
+# the precise path. Set False to fall back to the in-place arcface-crop method.
+expression_full_pipeline = True
+expression_stitching = True
+lp_crop_size = 512
+lp_crop_scale = 2.3
+lp_crop_vy = -0.125
 
 no_face_action = 0
 
