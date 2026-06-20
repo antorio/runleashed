@@ -91,7 +91,11 @@ expression_restore_brows = True
 expression_clamp = 0.0
 # Amplify the driving expression delta. 1.0 = natural target amount; try 2.0-3.0
 # to make subtle expressions clearly visible (may add artifacts if pushed high).
-expression_power = 3.0
+expression_power = 2.0
+# This generator inverts expression if fed the intuitive way; True applies the
+# corrected (verified) mapping so target expression transfers in the right
+# direction. Leave True. (Toggle only if a future model export flips again.)
+expression_invert_direction = True
 
 no_face_action = 0
 

@@ -130,24 +130,22 @@ class Expression_LivePortrait():
 
             feeds[feature_name] = np.ascontiguousarray(feature_volume, dtype=np.float32)
 
-            # The FaceFusion live_portrait_generator.onnx names its keypoint
-            # inputs 'source' and 'target' (confirmed from the model): 'source'
-            # takes the swapped face's own keypoints, 'target' takes the keypoints
-            # carrying the expression we want to apply (the driving). Match those
-            # names; earlier code only looked for 'driv' and silently fell back to
-            # an INVERTED positional mapping, which warped the wrong direction and
-            # made the restorer look like a near no-op.
-            driving_name = next((n for n in kp_inputs
-                                 if any(k in n.lower() for k in ('driv', 'target', 'targ'))), None)
-            source_name = next((n for n in kp_inputs
-                                if any(k in n.lower() for k in ('sourc', '_s', 'temp'))), None)
-            if driving_name and source_name and driving_name != source_name:
-                feeds[driving_name] = np.ascontiguousarray(kp_driving, dtype=np.float32)
-                feeds[source_name] = np.ascontiguousarray(kp_source, dtype=np.float32)
+            # Empirical ground truth (from on-GPU testing): this FaceFusion
+            # generator inverts expression if fed the "intuitive" way. To make the
+            # swapped face ADOPT the target's expression (target opens mouth ->
+            # result opens mouth), the DRIVING (target-expression) keypoints must
+            # go to the input named 'source', and the swapped face's OWN keypoints
+            # go to 'target'. (The names are opposite to their effect here.)
+            src_in = next((n for n in kp_inputs if 'sourc' in n.lower()), kp_inputs[0])
+            tgt_in = next((n for n in kp_inputs if ('targ' in n.lower() or 'driv' in n.lower())), kp_inputs[-1])
+            if src_in == tgt_in and len(kp_inputs) >= 2:
+                src_in, tgt_in = kp_inputs[0], kp_inputs[1]
+            if getattr(roop.globals, 'expression_invert_direction', True):
+                feeds[src_in] = np.ascontiguousarray(kp_driving, dtype=np.float32)
+                feeds[tgt_in] = np.ascontiguousarray(kp_source, dtype=np.float32)
             else:
-                # positional fallback: (feature, kp_driving, kp_source)
-                feeds[kp_inputs[0]] = np.ascontiguousarray(kp_driving, dtype=np.float32)
-                feeds[kp_inputs[1]] = np.ascontiguousarray(kp_source, dtype=np.float32)
+                feeds[src_in] = np.ascontiguousarray(kp_source, dtype=np.float32)
+                feeds[tgt_in] = np.ascontiguousarray(kp_driving, dtype=np.float32)
             gen_out = self._run_session(self.generator, feeds)[0]
 
             restored = lpu.parse_output(gen_out)
