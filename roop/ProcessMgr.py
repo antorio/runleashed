@@ -774,13 +774,26 @@ class ProcessMgr():
 
             hull = cv2.convexHull(hull_pts.astype(np.int32))
             # Degeneracy guard: at strong yaw (profile) or pitch (looking up) the
-            # far-side jaw landmarks collapse onto the near side, so the hull
-            # shrinks to a sliver. Intersecting that with the matte would cut the
-            # swapped face in half and reveal the original underneath. If the hull
-            # covers too little of the crop, bail out (return None) so paste_upscale
-            # keeps the full rectangle matte -- the original, never-half behaviour.
+            # far-side jaw landmarks collapse, so the jaw+forehead hull shrinks to
+            # a sliver. Intersecting that would cut the face in half. But falling
+            # back to the full rectangle makes the swap SPILL past the forehead /
+            # hairline onto hair and background (the look-up artefact). Instead,
+            # fall back to an ELLIPSE fit to the landmarks: it always has area (no
+            # profile sliver) yet stays bounded to the face oval (no spill).
             min_frac = float(getattr(roop.globals, 'face_hull_min_area', 0.22))
             if cv2.contourArea(hull) < min_frac * float(crop_h * crop_w):
+                allpts = np.vstack([pts_crop, forehead]).astype(np.float32)
+                if len(allpts) >= 5:
+                    try:
+                        (ecx, ecy), (eMA, ema), eang = cv2.fitEllipse(allpts)
+                        grow = 1.0 + float(roop.globals.face_hull_dilate) + 0.12
+                        matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
+                        cv2.ellipse(matte, (int(ecx), int(ecy)),
+                                    (int(eMA * 0.5 * grow), int(ema * 0.5 * grow)),
+                                    eang, 0, 360, 255, -1)
+                        return matte
+                    except Exception:
+                        return None
                 return None
             matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
             cv2.fillConvexPoly(matte, hull, 255)
