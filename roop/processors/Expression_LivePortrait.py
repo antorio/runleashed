@@ -100,10 +100,13 @@ class Expression_LivePortrait():
                 motion_points, rotation, applied, scale, translation)
 
             g_in = self.generator.get_inputs()
+            # FaceFusion order: forward_generate_frame(feature_volume,
+            # target_motion_points, temp_motion_points). So input[1] = driving
+            # (restored expression), input[2] = source (the swapped face's own).
             feeds = {
                 g_in[0].name: np.ascontiguousarray(feature_volume, dtype=np.float32),
-                g_in[1].name: np.ascontiguousarray(kp_source, dtype=np.float32),
-                g_in[2].name: np.ascontiguousarray(kp_driving, dtype=np.float32),
+                g_in[1].name: np.ascontiguousarray(kp_driving, dtype=np.float32),
+                g_in[2].name: np.ascontiguousarray(kp_source, dtype=np.float32),
             }
             gen_out = self._run_session(self.generator, feeds)[0]
 
@@ -114,7 +117,12 @@ class Expression_LivePortrait():
                     interpolation=cv2.INTER_AREA)
             return restored
         except Exception as e:
-            print("[Expression_LivePortrait] restore failed, passing through:", e)
+            if not getattr(self, '_err_logged', False):
+                import traceback
+                print("[Expression_LivePortrait] restore FAILED (showing once); "
+                      "passing the swapped face through unchanged:")
+                traceback.print_exc()
+                self._err_logged = True
             return swapped_crop
 
     def Release(self):

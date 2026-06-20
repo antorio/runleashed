@@ -179,7 +179,7 @@ def faceswap_tab():
             with gr.Column(scale=1):
                 num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
             with gr.Column(scale=2):
-                ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "DMDNet", "GFPGAN", "GPEN", "Restoreformer++"], value="None", label="Select post-processing")
+                ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "GFPGAN", "Restoreformer++"], value="None", label="Select post-processing")
 
         with gr.Row(variant='panel'):
             with gr.Column(scale=1):
@@ -222,12 +222,6 @@ def faceswap_tab():
                 bt_start = gr.Button("▶ Start", variant='primary')
             with gr.Column():
                 bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
-                gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
-            with gr.Column(scale=2):
-                #with gr.Row():
-                #   bt_outDir = gr.Button("Set Output Dir", size='sm')
-                #   output_Dir = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
-                output_method = gr.Dropdown(["File","Virtual Camera", "Both"], value="File", label="Select Output Method", interactive=True)
         with gr.Row(variant='panel'):
             with gr.Column():
                 resultfiles = gr.Files(label='Processed File(s)', interactive=False)
@@ -279,7 +273,7 @@ def faceswap_tab():
     bt_preview_mask.click(fn=on_preview_mask, inputs=[ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, clip_text, selected_mask_engine], outputs=[previewimage]) 
 
     start_event = bt_start.click(fn=start_swap, 
-        inputs=[ui.globals.ui_selected_swap_model, output_method, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
+        inputs=[ui.globals.ui_selected_swap_model, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
                     roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
     after_swap_event = start_event.success(fn=on_resultfiles_finished, inputs=[resultfiles], outputs=[resultimage, resultvideo])
@@ -740,11 +734,12 @@ def translate_swap_mode(dropdown_text):
     return "all"
 
 
-def start_swap( swap_model, output_method, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
+def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
                 selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
     global is_processing, list_files_process
+    output_method = "File"   # output always goes to file (virtual camera removed)
 
     if list_files_process is None or len(list_files_process) <= 0:
         return gr.Button(variant="primary"), None, None

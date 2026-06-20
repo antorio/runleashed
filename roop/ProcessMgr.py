@@ -17,7 +17,6 @@ from threading import Thread, Lock
 from queue import Queue
 from tqdm import tqdm
 from roop.ffmpeg_writer import FFMPEG_VideoWriter
-from roop.StreamWriter import StreamWriter
 import roop.globals
 
 
@@ -92,13 +91,9 @@ class ProcessMgr():
     'expression_restorer' : 'Expression_LivePortrait',
     'codeformer'        : 'Enhance_CodeFormer',
     'gfpgan'            : 'Enhance_GFPGAN',
-    'dmdnet'            : 'Enhance_DMDNet',
-    'gpen'              : 'Enhance_GPEN',
     'restoreformer++'   : 'Enhance_RestoreFormerPPlus',
-    'colorizer'         : 'Frame_Colorizer',
     'filter_generic'    : 'Frame_Filter',
     'removebg'          : 'Frame_Masking',
-    'upscale'           : 'Frame_Upscale'
     }
 
     def __init__(self, progress):
@@ -329,6 +324,7 @@ class ProcessMgr():
         if self.output_to_file:
             self.videowriter = FFMPEG_VideoWriter(target_video, (width, height), fps, codec=roop.globals.video_encoder, crf=roop.globals.video_quality, audiofile=None)
         if self.output_to_cam:
+            from roop.StreamWriter import StreamWriter
             self.streamwriter = StreamWriter((width, height), int(fps))
 
         readthread = Thread(target=self.read_frames_thread, args=(cap, frame_start, frame_end, threads))
@@ -750,19 +746,20 @@ class ProcessMgr():
             brow_center = brows.mean(axis=0)
             up = brow_center - chin  # vector pointing from chin up to the brows
             forehead = brows + up * float(roop.globals.face_hull_forehead)
-            hull_pts = np.vstack([jaw, forehead]).astype(np.int32)
-            hull = cv2.convexHull(hull_pts)
+            hull_pts = np.vstack([jaw, forehead]).astype(np.float32)
+
+            # Expand the hull outward from its centroid so it covers the whole
+            # face up to the jaw/hairline (compensates the later erosion in
+            # blur_area). This is a cheap polygon scale -- the previous version
+            # used a 100+px cv2.dilate kernel which was ~10x slower per face.
+            dilate = float(roop.globals.face_hull_dilate)
+            if dilate > 0:
+                c = hull_pts.mean(axis=0)
+                hull_pts = c + (hull_pts - c) * (1.0 + dilate)
+
+            hull = cv2.convexHull(hull_pts.astype(np.int32))
             matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
             cv2.fillConvexPoly(matte, hull, 255)
-            # Dilate outward a little so the hull covers the whole face up to the
-            # jaw/hairline. Without this the hull sits slightly inside the skin
-            # and the later erosion in blur_area shrinks it further, making the
-            # swapped face look smaller than the target. Still contour-shaped, so
-            # it keeps trimming neck/background at extreme angles.
-            margin = int(max(crop_h, crop_w) * float(roop.globals.face_hull_dilate))
-            if margin > 0:
-                k = 2 * margin + 1
-                matte = cv2.dilate(matte, np.ones((k, k), np.uint8))
             return matte
         except Exception:
             return None

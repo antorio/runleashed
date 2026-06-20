@@ -7,8 +7,6 @@ import roop.globals
 from roop.utilities import clean_dir
 
 frame_filters_map = { 
-    "Colorize B/W Images (Deoldify Artistic)" : {"colorizer" : {"subtype": "deoldify_artistic"}},
-    "Colorize B/W Images (Deoldify Stable)" : {"colorizer" : {"subtype": "deoldify_stable"}},
     "Background remove" : {"removebg" : {"subtype": ""}},
     "Filter Stylize" : {"filter_generic" : {"subtype" : "stylize" }},
     "Filter Detail Enhance" : {"filter_generic" : {"subtype" : "detailenhance" }},
@@ -18,9 +16,6 @@ frame_filters_map = {
     }
 
 frame_upscalers_map = {
-    "ESRGAN x2" : {"upscale" : {"subtype": "esrganx2"}},
-    "ESRGAN x4" : {"upscale" : {"subtype": "esrganx4"}},
-    "LSDIR x4" : {"upscale" : {"subtype": "lsdirx4"}}
 }
 
 def extras_tab():
@@ -91,8 +86,6 @@ def extras_tab():
                 with gr.Row(variant='panel'):
                     start_frame_process=gr.Button("Start processing")
 
-        with gr.Row():
-            gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
         with gr.Row():
             extra_files_output = gr.Files(label='Resulting output files', file_count="multiple")
 

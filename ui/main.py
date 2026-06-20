@@ -7,7 +7,6 @@ import roop.utilities as util
 import ui.globals as uii
 
 from ui.tabs.faceswap_tab import faceswap_tab
-from ui.tabs.livecam_tab import livecam_tab
 from ui.tabs.facemgr_tab import facemgr_tab
 from ui.tabs.extras_tab import extras_tab
 from ui.tabs.settings_tab import settings_tab
@@ -71,7 +70,6 @@ def run():
                     gr.Markdown(f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
                     gr.HTML(util.create_version_html(), elem_id="versions")
             faceswap_tab()
-            livecam_tab()
             facemgr_tab()
             extras_tab()
             settings_tab()

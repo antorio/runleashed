@@ -92,29 +92,34 @@ def transform_motion_points(motion_points, rotation, expression, scale, translat
 
 
 def build_applied_expression(temp_exp, target_exp, factor, use_eyes, use_mouth, use_brows):
-    """Blend target expression onto source per-area.
+    """Blend the driving (target) expression onto the source, then restrict to
+    the selected areas -- matching FaceFusion's pattern exactly:
 
-    applied = target*factor + temp*(1-factor) but only on enabled area indices;
-    disabled areas keep the source (temp) expression so they are not changed.
+        blended = target*factor + temp*(1-factor)        # all keypoints
+        for each area NOT selected: blended[area_idx] = temp[area_idx]
+
+    So with all three areas on, the full expression is restored. With an area
+    off, those keypoints keep the source (swapped) expression unchanged.
     """
     temp = temp_exp.reshape(1, -1, 3).astype(np.float32)
     targ = target_exp.reshape(1, -1, 3).astype(np.float32)
     blended = targ * float(factor) + temp * (1.0 - float(factor))
 
-    applied = temp.copy()
-    idx = []
-    if use_eyes:
-        idx += EXP_IDX_EYES
-    if use_mouth:
-        idx += EXP_IDX_MOUTH
-    if use_brows:
-        idx += EXP_IDX_BROWS
-    if not idx:
-        return temp  # nothing selected -> no change
-    n = applied.shape[1]
-    idx = [i for i in set(idx) if 0 <= i < n]
-    applied[:, idx, :] = blended[:, idx, :]
-    return limit_expression(applied)
+    n = blended.shape[1]
+
+    def reset(idxs):
+        ids = [i for i in idxs if 0 <= i < n]
+        if ids:
+            blended[:, ids, :] = temp[:, ids, :]
+
+    if not use_eyes:
+        reset(EXP_IDX_EYES)
+    if not use_mouth:
+        reset(EXP_IDX_MOUTH)
+    if not use_brows:
+        reset(EXP_IDX_BROWS)
+
+    return limit_expression(blended)
 
 
 def prepare_crop(crop_bgr, size=256):

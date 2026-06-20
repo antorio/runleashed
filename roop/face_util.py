@@ -484,15 +484,10 @@ def transform(data, center, output_size, scale, rotation):
 
 
 def trans_points2d(pts, M):
-    new_pts = np.zeros(shape=pts.shape, dtype=np.float32)
-    for i in range(pts.shape[0]):
-        pt = pts[i]
-        new_pt = np.array([pt[0], pt[1], 1.0], dtype=np.float32)
-        new_pt = np.dot(M, new_pt)
-        # print('new_pt', new_pt.shape, new_pt)
-        new_pts[i] = new_pt[0:2]
-
-    return new_pts
+    pts = np.asarray(pts, dtype=np.float32)
+    M = np.asarray(M, dtype=np.float32)
+    # (N,2) @ (2,2)^T + (2,)  -- vectorized, replaces the per-point Python loop
+    return (pts @ M[:, :2].T + M[:, 2]).astype(np.float32)
 
 
 def trans_points3d(pts, M):

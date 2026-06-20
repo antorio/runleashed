@@ -31,7 +31,7 @@ def facemgr_tab() -> None:
             fb_files = gr.Files(label='Input Files', file_count="multiple", file_types=["image", "video"], interactive=True)
         with gr.Row():
             with gr.Column():
-                gr.Button("👀 Open Output Folder", size='sm').click(fn=lambda: util.open_folder(roop.globals.output_path))
+                gr.Markdown(' ')
             with gr.Column():
                 gr.Markdown(' ')
         with gr.Row():

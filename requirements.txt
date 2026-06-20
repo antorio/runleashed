@@ -12,5 +12,4 @@ onnxruntime-gpu==1.19.0; sys_platform != 'darwin'
 tqdm==4.66.4
 ftfy
 regex
-pyvirtualcam
 pydantic==2.10.6
