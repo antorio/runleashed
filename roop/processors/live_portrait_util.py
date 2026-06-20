@@ -158,3 +158,28 @@ def parse_output(out):
     img = np.clip(img, 0.0, 1.0) * 255.0
     img = img.astype(np.uint8)[:, :, ::-1]  # RGB -> BGR
     return np.ascontiguousarray(img)
+
+
+def feather_blend(fg, bg, border=0.2):
+    """Blend the LivePortrait output (fg) over the aligned swapped crop (bg),
+    keeping fg in the centre (where the expression actually changes) and bg at
+    the borders (jawline / hairline / background), with a smooth radial feather
+    in between. This removes the 'half face' / edge cut-off that happens when the
+    generator shifts or scales the face slightly inside the crop, and hides any
+    seam. border = fraction of the radius over which fg fades into bg."""
+    import numpy as _np, cv2 as _cv2
+    h, w = fg.shape[:2]
+    if bg.shape[:2] != (h, w):
+        bg = _cv2.resize(bg, (w, h), interpolation=_cv2.INTER_AREA)
+    yy, xx = _np.mgrid[0:h, 0:w].astype(_np.float32)
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    nx = (xx - cx) / (w / 2.0)
+    ny = (yy - cy) / (h / 2.0)
+    r = _np.sqrt(nx * nx + ny * ny)
+    b = float(max(0.02, min(0.6, border)))
+    r0 = 1.0 - 2.0 * b
+    m = _np.clip((1.0 - r) / max(1e-6, (1.0 - r0)), 0.0, 1.0)
+    # smootherstep for a soft, seamless transition
+    m = m * m * m * (m * (m * 6 - 15) + 10)
+    m = m[..., None]
+    return (fg.astype(_np.float32) * m + bg.astype(_np.float32) * (1.0 - m)).astype(_np.uint8)

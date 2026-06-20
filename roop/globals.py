@@ -96,6 +96,10 @@ expression_power = 2.0
 # corrected (verified) mapping so target expression transfers in the right
 # direction. Leave True. (Toggle only if a future model export flips again.)
 expression_invert_direction = True
+# Border feather for the expression restorer: fraction of the crop radius where
+# the LivePortrait result fades into the aligned swapped face. Keeps edges clean
+# (no 'half face'). 0 disables. 0.2 default.
+expression_blend_border = 0.2
 
 no_face_action = 0
 

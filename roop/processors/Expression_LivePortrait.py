@@ -164,6 +164,11 @@ class Expression_LivePortrait():
                 restored = cv2.resize(
                     restored, (swapped_crop.shape[1], swapped_crop.shape[0]),
                     interpolation=cv2.INTER_AREA)
+            # Keep the LP expression in the centre, take borders from the aligned
+            # swapped face so edges never cut off / ghost.
+            border = float(getattr(roop.globals, 'expression_blend_border', 0.2))
+            if border > 0:
+                restored = lpu.feather_blend(restored, swapped_crop, border=border)
             return restored
         except Exception as e:
             if not getattr(self, '_err_logged', False):
