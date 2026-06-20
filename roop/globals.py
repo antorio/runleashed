@@ -50,6 +50,10 @@ face_hull_forehead = 0.6
 # face fully covers the target (compensates the erosion in blur_area). Raise
 # if the swap looks smaller than the target; lower if it bleeds onto the neck.
 face_hull_dilate = 0.10
+# Below this hull-area fraction of the crop, treat the hull as degenerate
+# (profile / looking up) and fall back to the full rectangle matte so the face
+# is never cut in half. 0 disables the guard.
+face_hull_min_area = 0.22
 # Optional Reinhard (LAB) color transfer of the swapped face toward the
 # target region before paste-back. Off by default (inswapper already does
 # reasonable color); enable if source/target lighting differs a lot.

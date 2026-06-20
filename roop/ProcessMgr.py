@@ -773,6 +773,15 @@ class ProcessMgr():
                 hull_pts = c + (hull_pts - c) * (1.0 + dilate)
 
             hull = cv2.convexHull(hull_pts.astype(np.int32))
+            # Degeneracy guard: at strong yaw (profile) or pitch (looking up) the
+            # far-side jaw landmarks collapse onto the near side, so the hull
+            # shrinks to a sliver. Intersecting that with the matte would cut the
+            # swapped face in half and reveal the original underneath. If the hull
+            # covers too little of the crop, bail out (return None) so paste_upscale
+            # keeps the full rectangle matte -- the original, never-half behaviour.
+            min_frac = float(getattr(roop.globals, 'face_hull_min_area', 0.22))
+            if cv2.contourArea(hull) < min_frac * float(crop_h * crop_w):
+                return None
             matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
             cv2.fillConvexPoly(matte, hull, 255)
             return matte
