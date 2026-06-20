@@ -117,6 +117,7 @@ lp_crop_vy = -0.125
 # head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.
 expression_pose_lock = True
 expression_pose_lock_scale = True
+expression_pose_lock_rotation = False
 
 no_face_action = 0
 
@@ -143,7 +144,7 @@ CFG: Settings = None
 # When True, prints per-stage timing for each processed/preview frame and logs
 # every time a model session is (re)created. This is how we find out whether the
 # slowness is a per-frame model reload or slow inference. Set False once diagnosed.
-profile_timings = True
+profile_timings = False
 # onnxruntime CUDA convolution algo search. The onnxruntime default is
 # 'EXHAUSTIVE', which can take a very long time on the first inference of large
 # conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is

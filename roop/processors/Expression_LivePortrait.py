@@ -159,7 +159,8 @@ class Expression_LivePortrait():
             if getattr(roop.globals, 'expression_pose_lock', True):
                 kp_driving = lpu.lock_pose(
                     kp_driving, kp_source,
-                    scale_lock=getattr(roop.globals, 'expression_pose_lock_scale', True))
+                    scale_lock=getattr(roop.globals, 'expression_pose_lock_scale', True),
+                    rotation_lock=getattr(roop.globals, 'expression_pose_lock_rotation', False))
 
             g_in = self.generator.get_inputs()
             if not getattr(self, '_gen_io_logged', False):

@@ -50,6 +50,24 @@ def settings_tab():
                 button_apply_restart = gr.Button("Restart Server", variant='primary')
                 button_clean_temp = gr.Button("Clean temp folder")
                 button_apply_settings = gr.Button("Apply Settings")
+        with gr.Row():
+            with gr.Accordion("Expression Restorer — live tuning (no restart needed)", open=False):
+                expr_global_controls = []
+                with gr.Row():
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock (translation)", value=roop.globals.expression_pose_lock, elem_id='expression_pose_lock', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock — scale", value=roop.globals.expression_pose_lock_scale, elem_id='expression_pose_lock_scale', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock — rotation", value=roop.globals.expression_pose_lock_rotation, elem_id='expression_pose_lock_rotation', interactive=True))
+                with gr.Row():
+                    expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=roop.globals.expression_full_pipeline, elem_id='expression_full_pipeline', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=roop.globals.expression_stitching, elem_id='expression_stitching', interactive=True))
+                with gr.Row():
+                    expr_power = gr.Slider(0.0, 5.0, value=roop.globals.expression_power, step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
+                    expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
+
+    for c in expr_global_controls:
+        c.select(fn=on_option_changed)
+    expr_power.release(fn=lambda v, n='expression_power': on_global_value_changed(v, n), inputs=[expr_power])
+    expr_border.release(fn=lambda v, n='expression_blend_border': on_global_value_changed(v, n), inputs=[expr_border])
 
     chk_det_size.select(fn=on_option_changed)
 
@@ -64,6 +82,11 @@ def settings_tab():
     button_clean_temp.click(fn=clean_temp)
     button_apply_settings.click(apply_settings, inputs=[themes, input_server_name, input_server_port, output_template])
     button_apply_restart.click(restart)
+
+
+def on_global_value_changed(new_val, attribname):
+    if hasattr(roop.globals, attribname):
+        setattr(roop.globals, attribname, new_val)
 
 
 def on_option_changed(evt: gr.SelectData):

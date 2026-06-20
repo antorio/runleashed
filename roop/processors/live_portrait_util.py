@@ -255,19 +255,29 @@ def apply_stitching(session, kp_source, kp_driving, log=False, invert=True):
     return new
 
 
-def lock_pose(kp_driving, kp_source, scale_lock=True):
-    """Deterministic pose lock (no model). Re-centre (and optionally re-scale)
-    the driving keypoints so their GLOBAL position/scale match the source's,
-    leaving only the LOCAL expression deformation. This removes the head
-    shift / enlarge / drift the generator otherwise shows, without the
-    miscalibrated stitcher model."""
+def lock_pose(kp_driving, kp_source, scale_lock=True, rotation_lock=False):
+    """Deterministic pose lock (no model). Re-centre (and optionally re-scale /
+    de-rotate) the driving keypoints so their GLOBAL position/scale/orientation
+    match the source's, leaving only the LOCAL expression deformation. Removes
+    the head shift / enlarge / drift / rotation the generator otherwise shows."""
     kd = np.asarray(kp_driving, dtype=np.float32).copy()
     ks = np.asarray(kp_source, dtype=np.float32)
     c_d = kd.mean(axis=1, keepdims=True)
     c_s = ks.mean(axis=1, keepdims=True)
-    kd = kd - c_d + c_s                      # translation lock
+    kd0 = kd - c_d
+    ks0 = ks - c_s
+    if rotation_lock:
+        try:
+            H = kd0[0].T @ ks0[0]                     # 3x3
+            U, S, Vt = np.linalg.svd(H)
+            d = np.sign(np.linalg.det(Vt.T @ U.T))
+            R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T   # rotate driving -> source
+            kd0 = (kd0[0] @ R.T)[None]
+        except Exception:
+            pass
+    kd = kd0 + c_s                                    # translation lock
     if scale_lock:
-        s_d = float(np.sqrt(((kd - c_s) ** 2).sum())) + 1e-8
-        s_s = float(np.sqrt(((ks - c_s) ** 2).sum())) + 1e-8
-        kd = c_s + (kd - c_s) * (s_s / s_d)  # scale lock
+        s_d = float(np.sqrt((kd0 ** 2).sum())) + 1e-8
+        s_s = float(np.sqrt((ks0 ** 2).sum())) + 1e-8
+        kd = c_s + (kd - c_s) * (s_s / s_d)           # scale lock
     return kd.astype(np.float32)
