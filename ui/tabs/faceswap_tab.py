@@ -45,189 +45,193 @@ def faceswap_tab():
     global no_face_choices, previewimage
 
     with gr.Tab("🎭 Face Swap"):
-        with gr.Row(variant='panel'):
+        # Face picker (shown only when several faces are detected) — appears at the top.
+        with gr.Row(visible=False) as dynamic_face_selection:
             with gr.Column(scale=2):
-                with gr.Row():
-                    input_faces = gr.Gallery(label="Input faces gallery", allow_preview=False, preview=False, height=138, columns=64, object_fit="scale-down", interactive=False)
-                    target_faces = gr.Gallery(label="Target faces gallery", allow_preview=False, preview=False, height=138, columns=64, object_fit="scale-down", interactive=False)
-                with gr.Row():
-                    bt_move_left_input = gr.Button("⬅ Move left", size='sm')
-                    bt_move_right_input = gr.Button("➡ Move right", size='sm')
-                    bt_move_left_target = gr.Button("⬅ Move left", size='sm')
-                    bt_move_right_target = gr.Button("➡ Move right", size='sm')
-                with gr.Row():
-                    bt_remove_selected_input_face = gr.Button("❌ Remove selected", size='sm')
-                    bt_add_local_faceset = gr.Button('Add local faceset', size='sm')
-                    # bt_clear_input_faces = gr.Button("💥 Clear all", variant='stop', size='sm')
-                    bt_remove_selected_target_face = gr.Button("❌ Remove selected", size='sm')
-                    bt_add_local = gr.Button('Add local files from', size='sm')
-                with gr.Row():
-                    local_faceset = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
-                    local_folder = gr.Textbox(show_label=False, placeholder="/content/", interactive=True)
+                face_selection = gr.Gallery(label="Several faces detected — pick one", allow_preview=False, preview=False, height=138, object_fit="cover", columns=32, elem_classes="rl-faces")
+            with gr.Column():
+                bt_faceselect = gr.Button("☑ Use selected face", variant='primary', size='sm')
+                bt_cancelfaceselect = gr.Button("Done", size='sm')
+            with gr.Column():
+                gr.Markdown(' ')
 
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        with gr.Accordion(label="Advanced Masking", open=False):
-                            chk_showmaskoffsets = gr.Checkbox(
-                                label="Show mask overlay in preview",
-                                value=False,
-                                interactive=True,
-                            )
-                            chk_restoreoriginalmouth = gr.Checkbox(
-                                label="Restore original mouth area",
-                                value=False,
-                                interactive=True,
-                            )
-                            mask_top = gr.Slider(
-                                0,
-                                1.0,
-                                value=0,
-                                label="Offset Face Top",
-                                step=0.01,
-                                interactive=True,
-                            )
-                            mask_bottom = gr.Slider(
-                                0,
-                                1.0,
-                                value=0,
-                                label="Offset Face Bottom",
-                                step=0.01,
-                                interactive=True,
-                            )
-                            mask_left = gr.Slider(
-                                0,
-                                1.0,
-                                value=0,
-                                label="Offset Face Left",
-                                step=0.01,
-                                interactive=True,
-                            )
-                            mask_right = gr.Slider(
-                                0,
-                                1.0,
-                                value=0,
-                                label="Offset Face Right",
-                                step=0.01,
-                                interactive=True,
-                            )
-                            mask_erosion = gr.Slider(
-                                1.0,
-                                3.0,
-                                value=1.0,
-                                label="Erosion Iterations",
-                                step=1.00,
-                                interactive=True,
-                            )
-                            mask_blur = gr.Slider(
-                                10.0,
-                                50.0,
-                                value=20.0,
-                                label="Blur size",
-                                step=1.00,
-                                interactive=True,
-                            )
-                            bt_toggle_masking = gr.Button(
-                                "Toggle manual masking", variant="secondary", size="sm"
-                            )
-                            selected_mask_engine = gr.Dropdown(
-                                ["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"],
-                                value="None",
-                                label="Face masking engine",
-                            )
-                            clip_text = gr.Textbox(
-                                label="List of objects to mask and restore back on fake face",
-                                value="cup,hands,hair,banana",
-                                interactive=False,
-                            )
-                            bt_preview_mask = gr.Button(
-                                "👥 Show Mask Preview", variant="secondary"
-                            )
+        with gr.Row():
+            # ============================== LEFT : inputs ==============================
+            with gr.Column(scale=3):
+                with gr.Column(elem_classes="rl-card"):
+                    gr.Markdown("Input faces", elem_classes="rl-h")
+                    input_faces = gr.Gallery(label="Input faces gallery", show_label=False, allow_preview=False, preview=False, height=138, columns=64, object_fit="scale-down", interactive=False, elem_classes="rl-faces")
+                    with gr.Row():
+                        bt_move_left_input = gr.Button("⬅ Move left", size='sm')
+                        bt_move_right_input = gr.Button("➡ Move right", size='sm')
+                        bt_remove_selected_input_face = gr.Button("❌ Remove selected", size='sm', elem_classes="rl-accent-btn")
+                    gr.Markdown("Auto-extracted from the source files you add below.", elem_classes="rl-sub")
 
-                with gr.Row(variant='panel'):
-                    bt_srcfiles = gr.Files(label='Source Images or Facesets', file_count="multiple", file_types=["image", ".fsz", ".webp"], elem_id='filelist', height=233)
-                    bt_destfiles = gr.Files(label='Target File(s)', file_count="multiple", file_types=["image", "video", ".webp"], elem_id='filelist', height=233)
-                with gr.Row(variant='panel'):
-                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], label="Specify Face Swap Model")
-                    forced_fps = gr.Slider(minimum=0, maximum=120, value=0, label="Video FPS", info='Overrides detected fps if not 0', step=1.0, interactive=True, container=True)
+                with gr.Column(elem_classes="rl-card"):
+                    gr.Markdown("Target faces · optional (selected-face mode)", elem_classes="rl-h")
+                    target_faces = gr.Gallery(label="Target faces gallery", show_label=False, allow_preview=False, preview=False, height=138, columns=64, object_fit="scale-down", interactive=False, elem_classes="rl-faces")
+                    with gr.Row():
+                        bt_move_left_target = gr.Button("⬅ Move left", size='sm')
+                        bt_move_right_target = gr.Button("➡ Move right", size='sm')
+                        bt_remove_selected_target_face = gr.Button("❌ Remove selected", size='sm', elem_classes="rl-accent-btn")
+                    gr.Markdown("Scrub to a frame and hit **Use Face from this Frame**.", elem_classes="rl-sub")
 
-            with gr.Column(scale=2):
+                with gr.Column(elem_classes="rl-card"):
+                    gr.Markdown("Input · the face you want to apply", elem_classes="rl-h")
+                    bt_srcfiles = gr.Files(label='Source Images or Facesets', file_count="multiple", file_types=["image", ".fsz", ".webp"], elem_id='filelist', height=180)
+                    with gr.Row():
+                        local_faceset = gr.Textbox(show_label=False, placeholder="/content/", interactive=True, scale=3)
+                        bt_add_local_faceset = gr.Button('Add faceset', size='sm', scale=1)
+
+                with gr.Column(elem_classes="rl-card"):
+                    gr.Markdown("Target · where faces get swapped", elem_classes="rl-h")
+                    bt_destfiles = gr.Files(label='Target File(s)', file_count="multiple", file_types=["image", "video", ".webp"], elem_id='filelist', height=180)
+                    with gr.Row():
+                        local_folder = gr.Textbox(show_label=False, placeholder="/content/", interactive=True, scale=3)
+                        bt_add_local = gr.Button('Add files', size='sm', scale=1)
+
+                with gr.Accordion(label="Advanced masking", open=False):
+                    selected_mask_engine = gr.Dropdown(
+                        ["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"],
+                        value="None",
+                        label="Face masking engine",
+                    )
+                    clip_text = gr.Textbox(
+                        label="List of objects to mask and restore back on fake face",
+                        value="cup,hands,hair,banana",
+                        interactive=False,
+                    )
+                    chk_showmaskoffsets = gr.Checkbox(
+                        label="Show mask overlay in preview",
+                        value=False,
+                        interactive=True,
+                    )
+                    chk_restoreoriginalmouth = gr.Checkbox(
+                        label="Restore original mouth area",
+                        value=False,
+                        interactive=True,
+                    )
+                    with gr.Row():
+                        mask_top = gr.Slider(
+                            0,
+                            1.0,
+                            value=0,
+                            label="Offset Face Top",
+                            step=0.01,
+                            interactive=True,
+                        )
+                        mask_bottom = gr.Slider(
+                            0,
+                            1.0,
+                            value=0,
+                            label="Offset Face Bottom",
+                            step=0.01,
+                            interactive=True,
+                        )
+                    with gr.Row():
+                        mask_left = gr.Slider(
+                            0,
+                            1.0,
+                            value=0,
+                            label="Offset Face Left",
+                            step=0.01,
+                            interactive=True,
+                        )
+                        mask_right = gr.Slider(
+                            0,
+                            1.0,
+                            value=0,
+                            label="Offset Face Right",
+                            step=0.01,
+                            interactive=True,
+                        )
+                    with gr.Row():
+                        mask_erosion = gr.Slider(
+                            1.0,
+                            3.0,
+                            value=1.0,
+                            label="Erosion Iterations",
+                            step=1.00,
+                            interactive=True,
+                        )
+                        mask_blur = gr.Slider(
+                            10.0,
+                            50.0,
+                            value=20.0,
+                            label="Blur size",
+                            step=1.00,
+                            interactive=True,
+                        )
+                    bt_toggle_masking = gr.Button(
+                        "Toggle manual masking", variant="secondary", size="sm"
+                    )
+                    bt_preview_mask = gr.Button(
+                        "👥 Show Mask Preview", variant="secondary", elem_classes="rl-accent-btn"
+                    )
+
+            # ============================== CENTER : stage ==============================
+            with gr.Column(scale=4, elem_classes="rl-stage"):
                 previewimage = gr.Image(label="Preview Image", height=576, interactive=False, visible=True, format="jpeg")
                 maskimage = gr.ImageEditor(label="Manual mask Image", sources=["clipboard"], transforms="", type="numpy",
                                              brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)
-                with gr.Row(variant='panel'):
+                with gr.Row():
                     fake_preview = gr.Checkbox(label="Face swap frames", value=False)
                     bt_refresh_preview = gr.Button("🔄 Refresh", variant='secondary', size='sm')
-                    bt_use_face_from_preview = gr.Button("Use Face from this Frame", variant='primary', size='sm')
+                    bt_use_face_from_preview = gr.Button("Use Face from this Frame", variant='secondary', size='sm', elem_classes="rl-accent-btn")
                 with gr.Row():
                     preview_frame_num = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=True)
                 with gr.Row():
                     text_frame_clip = gr.Markdown('Processing frame range [0 - 0]')
                     set_frame_start = gr.Button("⬅ Set as Start", size='sm')
                     set_frame_end = gr.Button("➡ Set as End", size='sm')
-        with gr.Row(visible=False) as dynamic_face_selection:
-            with gr.Column(scale=2):
-                face_selection = gr.Gallery(label="Detected faces", allow_preview=False, preview=False, height=138, object_fit="cover", columns=32)
-            with gr.Column():
-                bt_faceselect = gr.Button("☑ Use selected face", size='sm')
-                bt_cancelfaceselect = gr.Button("Done", size='sm')
-            with gr.Column():
-                gr.Markdown(' ') 
+                with gr.Row(elem_classes="rl-start"):
+                    bt_start = gr.Button("▶ Start", variant='primary', scale=2)
+                    bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False, scale=1)
+                with gr.Column(elem_classes="rl-card"):
+                    gr.Markdown("Result", elem_classes="rl-h")
+                    resultfiles = gr.Files(label='Processed File(s)', interactive=False)
+                    resultimage = gr.Image(type='filepath', label='Final Image', interactive=False )
+                    resultvideo = gr.Video(label='Final Video', interactive=False, visible=False)
 
-        with gr.Row(variant='panel'):
-            with gr.Column(scale=1):
-                selected_face_detection = gr.Dropdown(swap_choices, value="First found", label="Specify face selection for swapping")
-            with gr.Column(scale=1):
-                num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
-            with gr.Column(scale=2):
-                ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "GFPGAN", "Restoreformer++"], value="None", label="Select post-processing")
+            # ============================== RIGHT : settings ==============================
+            with gr.Column(scale=3):
+                with gr.Accordion(label="Model & frames", open=True):
+                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], label="Specify Face Swap Model")
+                    forced_fps = gr.Slider(minimum=0, maximum=120, value=0, label="Video FPS", info='Overrides detected fps if not 0', step=1.0, interactive=True, container=True)
 
-        with gr.Row(variant='panel'):
-            with gr.Column(scale=1):
-                cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
-            with gr.Column(scale=1):
-                sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Expression amount", info="How strongly to apply the target's expression")
-            with gr.Column(scale=2):
-                with gr.Row():
-                    cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
-                    cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
-                    cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
+                with gr.Accordion(label="Face selection", open=True):
+                    selected_face_detection = gr.Dropdown(swap_choices, value="First found", label="Specify face selection for swapping")
+                    num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
+                    max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
+
+                with gr.Accordion(label="Expression", open=True):
+                    cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
+                    sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Expression amount", info="How strongly to apply the target's expression")
+                    with gr.Row():
+                        cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
+                        cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
+                        cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
+
+                with gr.Accordion(label="Enhancement", open=True):
+                    ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
+                    ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "GFPGAN", "Restoreformer++"], value="None", label="Select post-processing")
+                    ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
+
+                with gr.Accordion(label="Video & output", open=True):
+                    video_swapping_method = gr.Dropdown(["Extract Frames to media","In-Memory processing"], value="In-Memory processing", label="Select video processing method", interactive=True)
+                    no_face_action = gr.Dropdown(choices=no_face_choices, value=no_face_choices[0], label="Action on no face detected", interactive=True)
+                    autorotate = gr.Checkbox(label="Auto rotate horizontal Faces", value=True)
+                    roop.globals.skip_audio = gr.Checkbox(label="Skip audio", value=False)
+                    roop.globals.keep_frames = gr.Checkbox(label="Keep Frames (relevant only when extracting frames)", value=False)
+                    vr_mode = gr.Checkbox(label="VR Mode", value=False)
+                    roop.globals.wait_after_extraction = gr.Checkbox(label="Wait for user key press before creating video ", value=False)
+
         cb_expression.change(fn=on_expression_toggle, inputs=cb_expression, outputs=[])
         sl_expression.change(fn=on_expression_factor, inputs=sl_expression, outputs=[])
         cb_expr_eyes.change(fn=on_expr_eyes, inputs=cb_expr_eyes, outputs=[])
         cb_expr_mouth.change(fn=on_expr_mouth, inputs=cb_expr_mouth, outputs=[])
         cb_expr_brows.change(fn=on_expr_brows, inputs=cb_expr_brows, outputs=[])
 
-        with gr.Row(variant='panel'):
-            with gr.Column(scale=1):
-                max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
-            with gr.Column(scale=1):
-                ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
-            with gr.Column(scale=2):
-                ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
-
-        with gr.Row(variant='panel'):
-            with gr.Column(scale=1):
-                video_swapping_method = gr.Dropdown(["Extract Frames to media","In-Memory processing"], value="In-Memory processing", label="Select video processing method", interactive=True)
-                no_face_action = gr.Dropdown(choices=no_face_choices, value=no_face_choices[0], label="Action on no face detected", interactive=True)
-                vr_mode = gr.Checkbox(label="VR Mode", value=False)
-            with gr.Column(scale=1):
-                with gr.Group():
-                    autorotate = gr.Checkbox(label="Auto rotate horizontal Faces", value=True)
-                    roop.globals.skip_audio = gr.Checkbox(label="Skip audio", value=False)
-                    roop.globals.keep_frames = gr.Checkbox(label="Keep Frames (relevant only when extracting frames)", value=False)
-                    roop.globals.wait_after_extraction = gr.Checkbox(label="Wait for user key press before creating video ", value=False)
-
-        with gr.Row(variant='panel'):
-            with gr.Column():
-                bt_start = gr.Button("▶ Start", variant='primary')
-            with gr.Column():
-                bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
-        with gr.Row(variant='panel'):
-            with gr.Column():
-                resultfiles = gr.Files(label='Processed File(s)', interactive=False)
-            with gr.Column():
-                resultimage = gr.Image(type='filepath', label='Final Image', interactive=False )
-                resultvideo = gr.Video(label='Final Video', interactive=False, visible=False)
 
     previewinputs = [ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, fake_preview, ui.globals.ui_selected_enhancer, selected_face_detection,
                         max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text, no_face_action, vr_mode, autorotate, maskimage, chk_showmaskoffsets, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale]

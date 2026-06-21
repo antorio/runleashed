@@ -152,8 +152,6 @@ def pre_check() -> bool:
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/rd64-uni-refined.pth'])
     download_directory_path = util.resolve_relative_path('../models/CodeFormer')
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/CodeFormerv0.1.onnx'])
-    download_directory_path = util.resolve_relative_path('../models/Frame')
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/isnet-general-use.onnx'])
 
     if not shutil.which('ffmpeg'):
        update_status('ffmpeg is not installed.')
