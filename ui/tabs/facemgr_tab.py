@@ -16,30 +16,22 @@ images = []
 
 def facemgr_tab() -> None:
     with gr.Tab("👨‍👩‍👧‍👦 Face Management"):
+        gr.Markdown("# Create blending facesets\nCollect several reference faces of one person into a single .fsz faceset — more angles blend into a stronger swap.")
         with gr.Row():
-            gr.Markdown("""
-                        # Create blending facesets
-                        Add multiple reference images into a faceset file.
-                        """)
-        with gr.Row():
-            videoimagefst = gr.Image(label="Cut face from video frame", height=576, interactive=False, visible=True, format="jpeg")
-        with gr.Row():
-            frame_num_fst = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=False)
-            fb_cutfromframe = gr.Button("Use faces from this frame", variant='secondary', interactive=False)
-        with gr.Row():
-            fb_facesetfile = gr.Files(label='Faceset', file_count='single', file_types=['.fsz'], interactive=True)
-            fb_files = gr.Files(label='Input Files', file_count="multiple", file_types=["image", "video"], interactive=True)
-        with gr.Row():
-            with gr.Column():
-                gr.Markdown(' ')
-            with gr.Column():
-                gr.Markdown(' ')
-        with gr.Row():
-            faces = gr.Gallery(label="Faces in this Faceset", allow_preview=True, preview=True, height=576, object_fit="scale-down")
-        with gr.Row():
-            fb_remove = gr.Button("Remove selected", variant='secondary')
-            fb_update = gr.Button("Create/Update Faceset file", variant='primary')
-            fb_clear = gr.Button("Clear all", variant='stop')
+            with gr.Column(scale=3, min_width=420):
+                with gr.Row():
+                    fb_files = gr.Files(label='Input Files', file_count="multiple", file_types=["image", "video"], interactive=True)
+                    fb_facesetfile = gr.Files(label='Faceset', file_count='single', file_types=['.fsz'], interactive=True)
+                videoimagefst = gr.Image(label="Cut face from video frame", height=512, interactive=False, visible=True, format="jpeg")
+                with gr.Row():
+                    frame_num_fst = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=False)
+                    fb_cutfromframe = gr.Button("Use faces from this frame", variant='secondary', interactive=False)
+            with gr.Column(scale=2, min_width=320):
+                faces = gr.Gallery(label="Faces in this Faceset", allow_preview=True, preview=True, height=512, object_fit="scale-down")
+                with gr.Row():
+                    fb_remove = gr.Button("Remove selected", variant='secondary')
+                    fb_update = gr.Button("Create/Update Faceset file", variant='primary')
+                    fb_clear = gr.Button("Clear all", variant='stop')
 
     fb_facesetfile.change(fn=on_faceset_changed, inputs=[fb_facesetfile], outputs=[faces])
     fb_files.change(fn=on_fb_files_changed, inputs=[fb_files], outputs=[faces, videoimagefst, frame_num_fst, fb_cutfromframe])

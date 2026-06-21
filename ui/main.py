@@ -9,7 +9,7 @@ import ui.globals as uii
 from ui.tabs.faceswap_tab import faceswap_tab
 from ui.tabs.facemgr_tab import facemgr_tab
 from ui.tabs.settings_tab import settings_tab
-from ui.theme_runleashed import runleashed_theme, RUNLEASHED_CSS
+from ui.theme import runleashed_theme, runleashed_css
 
 roop.globals.keep_fps = None
 roop.globals.keep_frames = None
@@ -44,7 +44,7 @@ def run():
     
     run_server = True
     uii.ui_restart_server = False
-    mycss = RUNLEASHED_CSS
+    mycss = runleashed_css
 
     while run_server:
         server_name = roop.globals.CFG.server_name
@@ -57,8 +57,8 @@ def run():
         if allowed_paths is None:
             allowed_paths = ['/content/drive/']
         ssl_verify = False if server_name == '0.0.0.0' else True
-        with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}', theme=runleashed_theme(), css=mycss, delete_cache=(60, 86400)) as ui:
-            with gr.Row(variant='compact', elem_id="rl-header"):
+        with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}', theme=runleashed_theme, css=mycss, delete_cache=(60, 86400)) as ui:
+            with gr.Row(variant='compact'):
                     gr.Markdown(f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
                     gr.HTML(util.create_version_html(), elem_id="versions")
             faceswap_tab()
