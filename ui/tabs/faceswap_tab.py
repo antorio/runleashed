@@ -99,7 +99,7 @@ def faceswap_tab():
                         bt_preview_mask = gr.Button("👥 Show Mask Preview", variant="secondary", size="sm")
 
             # ----------------------------- CENTER : preview & actions -----------------------------
-            with gr.Column(scale=5, min_width=480):
+            with gr.Column(scale=5, min_width=480, elem_id="center_stage"):
                 previewimage = gr.Image(label="Preview", height=512, interactive=False, visible=True, format="jpeg")
                 maskimage = gr.ImageEditor(label="Manual mask Image", sources=["clipboard"], transforms="", type="numpy",
                                              brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)

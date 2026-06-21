@@ -1,14 +1,10 @@
 """
 Gradio theme + CSS to match the redesigned (Gradio-native) look:
-orange primary, Source Sans Pro / IBM Plex Mono, light surfaces.
+orange primary, Source Sans Pro / IBM Plex Mono, light surfaces,
+corner block-labels, sticky center preview column, custom header.
 
-Usage in ui/main.py:
-
-    from ui.theme import runleashed_theme, runleashed_css
-    ...
-    with gr.Blocks(title=..., theme=runleashed_theme, css=runleashed_css,
-                   delete_cache=(60, 86400)) as ui:
-        ...
+Usage: import runleashed_theme + runleashed_css in ui/main.py (already wired
+in the main.py shipped alongside this file).
 """
 
 import gradio as gr
@@ -21,7 +17,6 @@ runleashed_theme = gr.themes.Default(
     font=[gr.themes.GoogleFont("Source Sans Pro"), "ui-sans-serif", "system-ui", "sans-serif"],
     font_mono=[gr.themes.GoogleFont("IBM Plex Mono"), "ui-monospace", "monospace"],
 ).set(
-    # primary action button = solid orange / white text
     button_primary_background_fill="*primary_500",
     button_primary_background_fill_hover="*primary_600",
     button_primary_text_color="white",
@@ -31,23 +26,54 @@ runleashed_theme = gr.themes.Default(
 
 runleashed_css = """
     span {color: var(--block-info-text-color)}
-    #fixedheight {
-        max-height: 238.4px;
-        overflow-y: auto !important;
+    #fixedheight { max-height: 238.4px; overflow-y: auto !important; }
+    .image-container.svelte-1l6wqyv { height: 100%; }
+
+    /* ---- container width ---- */
+    .gradio-container { max-width: 1500px !important; margin: 0 auto !important; }
+
+    /* ---- custom header ---- */
+    #app_header { padding: 14px 4px 2px; border: none !important; }
+    #app_header h1 { margin: 0; font-size: 28px; font-weight: 700;
+        letter-spacing: -.01em; color: var(--body-text-color); }
+    #app_header h1 a { color: inherit; text-decoration: none; }
+    #versions { display: flex; align-items: center; }
+    #versions, #versions * { font-family: var(--font-mono);
+        font-size: 12.5px; color: var(--body-text-color-subdued); }
+
+    /* ---- corner block labels (mimics the mockup's bottom-right corner tabs) ---- */
+    .block > .label-wrap,
+    span.svelte-1gfkn6j,
+    .gradio-container .block > label > span:first-child {
+        /* default Gradio label is already top-left; nudge styling to match */
+        font-size: 13px !important; color: var(--body-text-color) !important;
     }
-    .image-container.svelte-1l6wqyv {height: 100%}
 
-    /* keep the three Face-Swap columns from collapsing too early */
-    .gradio-container {max-width: 1500px !important; margin: 0 auto !important;}
+    /* ---- sticky center preview column ---- */
+    @media (min-width: 1024px) {
+        #center_stage {
+            position: sticky; top: 12px;
+            align-self: flex-start;
+            max-height: calc(100vh - 24px);
+            overflow-y: auto;
+        }
+    }
 
-    /* OPTIONAL: turn a Number's info text into a hover-only tooltip.
-       Give the component elem_id="fps_field" to enable, e.g.
-           forced_fps = gr.Number(..., elem_id="fps_field")  */
+    /* ---- FPS info as hover tooltip (set elem_id="fps_field" on the Number) ---- */
+    #fps_field { position: relative; }
     #fps_field .info {
         position: absolute; z-index: 10; visibility: hidden; opacity: 0;
         transition: opacity .12s; background: #1f2937; color: #fff;
         padding: 4px 8px; border-radius: 6px; font-size: 12px; max-width: 220px;
-        margin-top: 4px;
+        margin-top: 4px; pointer-events: none;
     }
     #fps_field:hover .info { visibility: visible; opacity: 1; }
+
+    /* ---- clean footer: hide Gradio's default (Use via API · Built with Gradio ·
+       Settings + icons) and show a single tidy 'use via API' line instead ---- */
+    footer { display: none !important; }
+    .rl-footer {
+        text-align: center; padding: 20px; font-size: 11px;
+        color: var(--body-text-color-subdued); font-family: var(--font-mono);
+    }
 """

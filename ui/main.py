@@ -44,7 +44,6 @@ def run():
     
     run_server = True
     uii.ui_restart_server = False
-    mycss = runleashed_css
 
     while run_server:
         server_name = roop.globals.CFG.server_name
@@ -57,13 +56,17 @@ def run():
         if allowed_paths is None:
             allowed_paths = ['/content/drive/']
         ssl_verify = False if server_name == '0.0.0.0' else True
-        with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}', theme=runleashed_theme, css=mycss, delete_cache=(60, 86400)) as ui:
-            with gr.Row(variant='compact'):
-                    gr.Markdown(f"### [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
-                    gr.HTML(util.create_version_html(), elem_id="versions")
+        with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}',
+                       theme=runleashed_theme, css=runleashed_css,
+                       delete_cache=(60, 86400)) as ui:
+            # ---- header: bold title + version, then env badges inline ----
+            with gr.Row(variant='compact', elem_id="app_header"):
+                gr.Markdown(f"# [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
+                gr.HTML(util.create_version_html(), elem_id="versions")
             faceswap_tab()
             facemgr_tab()
             settings_tab()
+            gr.HTML('<div class="rl-footer">use via API</div>')
         launch_browser = roop.globals.CFG.launch_browser
 
         uii.ui_restart_server = False
@@ -85,4 +88,3 @@ def run():
 
 def show_msg(msg: str):
     gr.Info(msg)
-
