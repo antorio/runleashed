@@ -412,23 +412,29 @@ def shuffle_array(arr):
 
 
 def tuned_execution_providers():
-    """Return roop.globals.execution_providers with cuDNN/arena options merged
-    into the CUDA provider, to avoid onnxruntime's slow EXHAUSTIVE conv-algo
-    search and aggressive arena growth. Safe for non-CUDA providers (returned
-    unchanged)."""
+    """Return roop.globals.execution_providers with memory- and speed-friendly
+    CUDA options merged in:
+      - cudnn_conv_algo_search = HEURISTIC  (avoids the slow EXHAUSTIVE search)
+      - cudnn_conv_use_max_workspace = 0    (don't reserve the max conv workspace,
+        which can be GBs per session -- this is what caused the CUDA OOM when many
+        models, e.g. the 4 LivePortrait nets + GFPGAN, are resident together)
+    We deliberately do NOT force arena_extend_strategy=kSameAsRequested anymore:
+    it can fragment the arena and OOM (onnxruntime issue #14474); the default
+    kNextPowerOfTwo reuses blocks better. Safe for non-CUDA providers."""
     import roop.globals
     provs = roop.globals.execution_providers or []
     search = getattr(roop.globals, 'cudnn_conv_algo_search', 'HEURISTIC')
+    maxws = '1' if getattr(roop.globals, 'cudnn_conv_use_max_workspace', False) else '0'
+    extra = {'cudnn_conv_algo_search': search, 'cudnn_conv_use_max_workspace': maxws}
     out = []
     for p in provs:
         if isinstance(p, (tuple, list)) and len(p) == 2 and 'CUDA' in str(p[0]):
             opts = dict(p[1]) if isinstance(p[1], dict) else {}
-            opts.setdefault('cudnn_conv_algo_search', search)
-            opts.setdefault('arena_extend_strategy', 'kSameAsRequested')
+            for k, v in extra.items():
+                opts.setdefault(k, v)
             out.append((p[0], opts))
         elif isinstance(p, str) and 'CUDA' in p:
-            out.append((p, {'cudnn_conv_algo_search': search,
-                            'arena_extend_strategy': 'kSameAsRequested'}))
+            out.append((p, dict(extra)))
         else:
             out.append(p)
     return out

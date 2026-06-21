@@ -150,6 +150,9 @@ profile_timings = False
 # conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is
 # tight. 'HEURISTIC' avoids that long search at a negligible quality cost.
 cudnn_conv_algo_search = 'HEURISTIC'
+# False = don't reserve max cuDNN conv workspace (saves GBs of GPU RAM; prevents
+# the CUDA out-of-memory when many models are loaded). True only if you have RAM.
+cudnn_conv_use_max_workspace = False
 
 # Preview delivery: the Gradio preview image is sent to the browser (often over a
 # slow gradio.live share tunnel) as a full-resolution PNG, which can take a long

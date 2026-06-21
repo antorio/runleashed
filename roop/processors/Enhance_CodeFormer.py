@@ -26,7 +26,7 @@ class Enhance_CodeFormer():
             # replace Mac mps with cpu for the moment
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
             model_path = resolve_relative_path('../models/CodeFormer/CodeFormerv0.1.onnx')
-            self.model_codeformer = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+            self.model_codeformer = onnxruntime.InferenceSession(model_path, None, providers=__import__('roop.utilities',fromlist=['tuned_execution_providers']).tuned_execution_providers())
             self.model_inputs = self.model_codeformer.get_inputs()
             model_outputs = self.model_codeformer.get_outputs()
             self.io_binding = self.model_codeformer.io_binding()           

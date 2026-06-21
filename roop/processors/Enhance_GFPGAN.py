@@ -26,7 +26,7 @@ class Enhance_GFPGAN():
         self.plugin_options = plugin_options
         if self.model_gfpgan is None:
             model_path = resolve_relative_path('../models/GFPGANv1.4.onnx')
-            self.model_gfpgan = onnxruntime.InferenceSession(model_path, None, providers=roop.globals.execution_providers)
+            self.model_gfpgan = onnxruntime.InferenceSession(model_path, None, providers=__import__('roop.utilities',fromlist=['tuned_execution_providers']).tuned_execution_providers())
             # replace Mac mps with cpu for the moment
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
