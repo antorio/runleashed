@@ -117,7 +117,10 @@ lp_crop_vy = -0.125
 # head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.
 expression_pose_lock = True
 expression_pose_lock_scale = True
-expression_pose_lock_rotation = False
+expression_pose_lock_rotation = True
+# Serialise the LivePortrait sessions across threads (prevents cuDNN/illegal-memory
+# crashes when Max Threads is high). True is safe; False = max speed, fewer threads.
+expression_serialize = True
 
 no_face_action = 0
 

@@ -60,6 +60,7 @@ def settings_tab():
                 with gr.Row():
                     expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=roop.globals.expression_full_pipeline, elem_id='expression_full_pipeline', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=roop.globals.expression_stitching, elem_id='expression_stitching', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Serialize (stable at high threads)", value=roop.globals.expression_serialize, elem_id='expression_serialize', interactive=True))
                 with gr.Row():
                     expr_power = gr.Slider(0.0, 5.0, value=roop.globals.expression_power, step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
                     expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)

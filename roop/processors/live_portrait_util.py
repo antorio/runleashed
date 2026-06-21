@@ -151,7 +151,7 @@ def prepare_crop(crop_bgr, size=256):
 
 def parse_output(out):
     """generator output (1,3,H,W) float [0,1] -> HxWx3 uint8 BGR."""
-    img = np.asarray(out)
+    img = np.nan_to_num(np.asarray(out, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
     if img.ndim == 4:
         img = img[0]
     img = np.transpose(img, (1, 2, 0))      # CHW -> HWC (RGB)
@@ -277,7 +277,8 @@ def lock_pose(kp_driving, kp_source, scale_lock=True, rotation_lock=False):
             pass
     kd = kd0 + c_s                                    # translation lock
     if scale_lock:
-        s_d = float(np.sqrt((kd0 ** 2).sum())) + 1e-8
-        s_s = float(np.sqrt((ks0 ** 2).sum())) + 1e-8
-        kd = c_s + (kd - c_s) * (s_s / s_d)           # scale lock
+        s_d = float(np.sqrt((kd0 ** 2).sum())) + 1e-6
+        s_s = float(np.sqrt((ks0 ** 2).sum())) + 1e-6
+        ratio = float(np.clip(s_s / s_d, 0.5, 2.0))   # clamp to avoid blow-up -> NaN
+        kd = c_s + (kd - c_s) * ratio                 # scale lock
     return kd.astype(np.float32)

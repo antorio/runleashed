@@ -1,4 +1,5 @@
 import os
+import threading
 import numpy as np
 import cv2
 import onnxruntime
@@ -7,6 +8,12 @@ import roop.globals
 from roop.typing import Face, Frame
 from roop.utilities import resolve_relative_path, conditional_thread_semaphore
 from roop.processors import live_portrait_util as lpu
+
+# Serialises the heavy LivePortrait CUDA sessions across worker threads. roop's
+# conditional_thread_semaphore is a no-op on CUDA, so 8 threads otherwise hammer
+# the same generator session concurrently -> cuDNN EXECUTION_FAILED / illegal
+# memory access. This lock makes the expression step thread-safe at any thread count.
+_LP_LOCK = threading.Lock()
 
 
 # Optional LivePortrait-powered expression restorer. Re-injects the TARGET
@@ -62,8 +69,17 @@ class Expression_LivePortrait():
             self.devicename = self.plugin_options["devicename"].replace('mps', 'cpu')
 
     def _run_session(self, session, feeds):
+        safe = {}
+        for k, v in feeds.items():
+            a = np.ascontiguousarray(v, dtype=np.float32)
+            if not np.isfinite(a).all():
+                a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+            safe[k] = a
+        if getattr(roop.globals, 'expression_serialize', True):
+            with _LP_LOCK:
+                return session.run(None, safe)
         with conditional_thread_semaphore():
-            return session.run(None, feeds)
+            return session.run(None, safe)
 
     def _extract_motion(self, crop_chw):
         name = self.motion_extractor.get_inputs()[0].name
