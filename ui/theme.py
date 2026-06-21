@@ -68,12 +68,4 @@ runleashed_css = """
         margin-top: 4px; pointer-events: none;
     }
     #fps_field:hover .info { visibility: visible; opacity: 1; }
-
-    /* ---- clean footer: hide Gradio's default (Use via API · Built with Gradio ·
-       Settings + icons) and show a single tidy 'use via API' line instead ---- */
-    footer { display: none !important; }
-    .rl-footer {
-        text-align: center; padding: 20px; font-size: 11px;
-        color: var(--body-text-color-subdued); font-family: var(--font-mono);
-    }
 """

@@ -8,6 +8,7 @@ import ui.globals as uii
 
 from ui.tabs.faceswap_tab import faceswap_tab
 from ui.tabs.facemgr_tab import facemgr_tab
+from ui.tabs.extras_tab import extras_tab
 from ui.tabs.settings_tab import settings_tab
 from ui.theme import runleashed_theme, runleashed_css
 
@@ -65,8 +66,8 @@ def run():
                 gr.HTML(util.create_version_html(), elem_id="versions")
             faceswap_tab()
             facemgr_tab()
+            extras_tab()
             settings_tab()
-            gr.HTML('<div class="rl-footer">use via API</div>')
         launch_browser = roop.globals.CFG.launch_browser
 
         uii.ui_restart_server = False
