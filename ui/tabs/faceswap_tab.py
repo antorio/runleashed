@@ -44,13 +44,13 @@ manual_masking = False
 def faceswap_tab():
     global no_face_choices, previewimage
 
-    with gr.Tab("🎭 Face Swap"):
+    with gr.Tab("Face Swap"):
         # Detected-faces picker — shown after analysing a source/target file
         with gr.Row(visible=False) as dynamic_face_selection:
             with gr.Column(scale=2):
                 face_selection = gr.Gallery(label="Detected faces", allow_preview=False, preview=False, height=138, object_fit="cover", columns=32)
             with gr.Column():
-                bt_faceselect = gr.Button("☑ Use selected face", size='sm')
+                bt_faceselect = gr.Button("Use selected face", size='sm')
                 bt_cancelfaceselect = gr.Button("Done", size='sm')
             with gr.Column():
                 gr.Markdown(' ')
@@ -58,27 +58,21 @@ def faceswap_tab():
         with gr.Row():
             # ----------------------------- LEFT : inputs -----------------------------
             with gr.Column(scale=3, min_width=300):
-                input_faces = gr.Gallery(label="Input Faces", allow_preview=False, preview=False, height=128, columns=64, object_fit="scale-down", interactive=False)
-                with gr.Row():
-                    bt_move_left_input = gr.Button("⬅ Move left", size='sm')
-                    bt_move_right_input = gr.Button("➡ Move right", size='sm')
-                    bt_remove_selected_input_face = gr.Button("❌ Remove selected", size='sm')
+                input_faces = gr.Gallery(label="Input Faces", allow_preview=False, preview=False, height=132, columns=64, object_fit="cover", interactive=False, elem_classes="facegrid")
+                bt_remove_selected_input_face = gr.Button("Remove selected", size='sm')
 
-                target_faces = gr.Gallery(label="Target Faces · optional", allow_preview=False, preview=False, height=128, columns=64, object_fit="scale-down", interactive=False)
-                with gr.Row():
-                    bt_move_left_target = gr.Button("⬅ Move left", size='sm')
-                    bt_move_right_target = gr.Button("➡ Move right", size='sm')
-                    bt_remove_selected_target_face = gr.Button("❌ Remove selected", size='sm')
+                target_faces = gr.Gallery(label="Target Faces · optional", allow_preview=False, preview=False, height=132, columns=64, object_fit="cover", interactive=False, elem_classes="facegrid")
+                bt_remove_selected_target_face = gr.Button("Remove selected", size='sm')
 
-                bt_srcfiles = gr.Files(label='Source Faces', file_count="multiple", file_types=["image", ".fsz", ".webp"], elem_id='filelist', height=150)
-                with gr.Row():
-                    local_faceset = gr.Textbox(show_label=False, placeholder="/content/", interactive=True, scale=3)
-                    bt_add_local_faceset = gr.Button('Add', size='sm', scale=1)
+                bt_srcfiles = gr.Files(label='Source Faces', file_count="multiple", file_types=["image", ".fsz", ".webp"], elem_id='filelist', height=92)
+                with gr.Row(equal_height=True):
+                    local_faceset = gr.Textbox(show_label=False, placeholder="/content/path/to/faces", interactive=True, scale=8, container=False)
+                    bt_add_local_faceset = gr.Button('Add', size='sm', scale=1, min_width=70)
 
-                bt_destfiles = gr.Files(label='Target File(s)', file_count="multiple", file_types=["image", "video", ".webp"], elem_id='filelist', height=150)
-                with gr.Row():
-                    local_folder = gr.Textbox(show_label=False, placeholder="/content/", interactive=True, scale=3)
-                    bt_add_local = gr.Button('Add', size='sm', scale=1)
+                bt_destfiles = gr.Files(label='Target File(s)', file_count="multiple", file_types=["image", "video", ".webp"], elem_id='filelist', height=92)
+                with gr.Row(equal_height=True):
+                    local_folder = gr.Textbox(show_label=False, placeholder="/content/path/to/media", interactive=True, scale=8, container=False)
+                    bt_add_local = gr.Button('Add', size='sm', scale=1, min_width=70)
 
                 with gr.Accordion(label="Advanced Masking", open=False):
                     selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"], value="None", label="Face masking engine")
@@ -96,7 +90,7 @@ def faceswap_tab():
                         mask_blur = gr.Slider(10.0, 50.0, value=20.0, label="Blur size", step=1.00, interactive=True)
                     with gr.Row():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
-                        bt_preview_mask = gr.Button("👥 Show Mask Preview", variant="secondary", size="sm")
+                        bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
 
             # ----------------------------- CENTER : preview & actions -----------------------------
             with gr.Column(scale=5, min_width=480, elem_id="center_stage"):
@@ -105,13 +99,13 @@ def faceswap_tab():
                                              brush=gr.Brush(color_mode="fixed", colors=["rgba(255, 255, 255, 1"]), interactive=True, visible=False)
                 with gr.Row(variant='panel'):
                     fake_preview = gr.Checkbox(label="Face swap frames", value=False)
-                    bt_refresh_preview = gr.Button("🔄 Refresh", variant='secondary', size='sm')
+                    bt_refresh_preview = gr.Button("Refresh", variant='secondary', size='sm')
                     bt_use_face_from_preview = gr.Button("Use Face from this Frame", variant='primary', size='sm')
                 preview_frame_num = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=True)
-                with gr.Row():
-                    text_frame_clip = gr.Markdown('Processing frame range [0 - 0]')
-                    set_frame_start = gr.Button("⬅ Set as Start", size='sm')
-                    set_frame_end = gr.Button("➡ Set as End", size='sm')
+                with gr.Row(equal_height=True):
+                    text_frame_clip = gr.Markdown('in / out · range [0 - 0]')
+                    set_frame_start = gr.Button("Set as Start", size='sm')
+                    set_frame_end = gr.Button("Set as End", size='sm')
                 with gr.Row():
                     bt_start = gr.Button("▶ Start", variant='primary')
                     bt_stop = gr.Button("⏹ Stop", variant='secondary', interactive=False)
@@ -124,11 +118,11 @@ def faceswap_tab():
             # ----------------------------- RIGHT : settings -----------------------------
             with gr.Column(scale=3, min_width=320):
                 with gr.Accordion(label="Model & frames", open=True):
-                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], label="Specify Face Swap Model")
-                    forced_fps = gr.Number(value=0, label="Video FPS", info='Overrides detected fps if not 0', precision=0, minimum=0, maximum=120, interactive=True)
+                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
+                    forced_fps = gr.Number(value=0, label="Video FPS", info='Overrides detected fps if not 0', precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
 
                 with gr.Accordion(label="Face selection", open=True):
-                    selected_face_detection = gr.Dropdown(swap_choices, value="First found", label="Specify face selection for swapping")
+                    selected_face_detection = gr.Dropdown(swap_choices, value="First found", show_label=False)
                     num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps", info="More steps may increase likeness")
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
@@ -166,11 +160,6 @@ def faceswap_tab():
     previewoutputs = [previewimage, maskimage, preview_frame_num] 
     input_faces.select(on_select_input_face, None, None).success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
     
-    bt_move_left_input.click(fn=move_selected_input, inputs=[bt_move_left_input], outputs=[input_faces])
-    bt_move_right_input.click(fn=move_selected_input, inputs=[bt_move_right_input], outputs=[input_faces])
-    bt_move_left_target.click(fn=move_selected_target, inputs=[bt_move_left_target], outputs=[target_faces])
-    bt_move_right_target.click(fn=move_selected_target, inputs=[bt_move_right_target], outputs=[target_faces])
-
     bt_remove_selected_input_face.click(fn=remove_selected_input_face, outputs=[input_faces])
     bt_srcfiles.change(fn=on_srcfile_changed, show_progress='full', inputs=bt_srcfiles, outputs=[dynamic_face_selection, face_selection, input_faces, bt_srcfiles])
 
@@ -580,7 +569,7 @@ def on_toggle_masking(previewimage, mask):
     return gr.Image(visible=True), gr.ImageEditor(visible=False)
 
 def gen_processing_text(start, end):
-    return f'Processing frame range [{start} - {end}]'
+    return f'in / out · range [{start} - {end}]'
 
 def on_set_frame(sender:str, frame_num):
     global selected_preview_index, list_files_process

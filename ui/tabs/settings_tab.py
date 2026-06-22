@@ -18,7 +18,7 @@ def settings_tab():
     global providerlist
 
     providerlist = suggest_execution_providers()
-    with gr.Tab("⚙ Settings"):
+    with gr.Tab("Settings"):
         gr.Markdown("### Settings\nGlobal preferences — applied to every swap and saved automatically.")
         with gr.Row():
             with gr.Column():

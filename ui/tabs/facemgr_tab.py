@@ -15,7 +15,7 @@ images = []
 
 
 def facemgr_tab() -> None:
-    with gr.Tab("👨‍👩‍👧‍👦 Face Management"):
+    with gr.Tab("Face Management"):
         gr.Markdown("# Create blending facesets\nCollect several reference faces of one person into a single .fsz faceset — more angles blend into a stronger swap.")
         with gr.Row():
             with gr.Column(scale=3, min_width=420):
