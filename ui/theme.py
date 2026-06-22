@@ -65,49 +65,51 @@ button.secondary:hover { background: #f9fafb !important; border-color: #d1d5db !
 /* ---------- trim empty upload/file dropzones ---------- */
 #filelist .file-preview, #filelist { min-height: 0 !important; }
 
-/* ---------- STICKY center preview column ----------
-   Minimal + non-invasive: top-align the row so the column isn't stretched to
-   full height, then stick it. No forced overflow on ancestors (that broke the
-   layout / caused overlapping panels). If it still scrolls, see STICKY note
-   in INTEGRATION.md. */
+/* ---------- center preview column ----------
+   The "stick to scroll" behaviour is done in JS (runleashed_head) via translateY,
+   because CSS position:sticky is unreliable inside Gradio's tab transforms.
+   Here we just top-align the row and give the column a stacking context. */
 #swap_row { align-items: flex-start !important; }
-#center_stage { position: sticky !important; top: 8px !important; align-self: flex-start !important; }
+#center_stage { position: relative !important; z-index: 5; will-change: transform; }
 
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }
 """
 
-# Injected into <head>. Native position:sticky silently fails when an ancestor
-# establishes a containing block via transform / filter / perspective / contain
-# (Gradio uses transforms for tab transitions). This neutralises those on the
-# ancestors of #center_stage so the CSS sticky actually engages. It also retries
-# because Gradio mounts tab content dynamically after first paint.
+# Injected into <head>. We do NOT use CSS position:sticky for the center column
+# — it silently fails in Gradio (ancestor transforms create a containing block).
+# Instead this is a pure-JS "fake sticky": translateY the column to follow scroll,
+# clamped within its row. No dependency on overflow / transform / sticky support.
 runleashed_head = """
 <script>
 (function () {
-  function clearBlockers() {
-    var el = document.querySelector('#center_stage');
-    if (!el) return false;
-    var n = el.parentElement;
-    while (n && n !== document.documentElement) {
-      var s = getComputedStyle(n);
-      if (s.transform !== 'none' || s.filter !== 'none' ||
-          s.perspective !== 'none' || /(paint|layout|content|strict)/.test(s.contain)) {
-        n.style.setProperty('transform', 'none', 'important');
-        n.style.setProperty('filter', 'none', 'important');
-        n.style.setProperty('perspective', 'none', 'important');
-        n.style.setProperty('contain', 'none', 'important');
-      }
-      n = n.parentElement;
-    }
-    return true;
+  var TOP = 8;            // gap from viewport top (px)
+  function tick() {
+    var col = document.querySelector('#center_stage');
+    var row = document.querySelector('#swap_row');
+    if (!col || !row || col.offsetWidth === 0) return;     // hidden tab -> skip
+    col.style.transform = 'none';                          // reset to measure
+    var rowTop = row.getBoundingClientRect().top;
+    var shift = TOP - rowTop;                              // move down to reach the top gap
+    if (shift < 0) shift = 0;
+    var maxShift = row.offsetHeight - col.offsetHeight;    // don't pass the row bottom
+    if (maxShift < 0) maxShift = 0;
+    if (shift > maxShift) shift = maxShift;
+    col.style.transform = 'translateY(' + shift + 'px)';
   }
-  var tries = 0;
-  var iv = setInterval(function () {
-    if (clearBlockers() || ++tries > 60) clearInterval(iv);
-  }, 250);
-  window.addEventListener('load', clearBlockers);
-  document.addEventListener('click', function () { setTimeout(clearBlockers, 50); });
+  var scheduled = false;
+  function onScroll() {
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(function () { scheduled = false; tick(); });
+  }
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll);
+  // Gradio mounts tab content after first paint + on tab switch -> keep re-binding.
+  var iv = setInterval(tick, 400);
+  setTimeout(function () { clearInterval(iv); }, 30000);   // stop polling after warm-up
+  document.addEventListener('click', function () { setTimeout(tick, 60); });
+  window.addEventListener('load', tick);
 })();
 </script>
 """
