@@ -66,6 +66,7 @@ def run():
             faceswap_tab()
             facemgr_tab()
             settings_tab()
+            gr.HTML('<div class="rl-footer">Use via API</div>')
         launch_browser = roop.globals.CFG.launch_browser
 
         uii.ui_restart_server = False

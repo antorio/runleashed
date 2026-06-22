@@ -95,6 +95,14 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }
+
+/* ---------- clean footer: hide Gradio default (Use via API · Built with Gradio ·
+   Settings + icons), show a single tidy 'Use via API' line ---------- */
+footer { display: none !important; }
+.rl-footer {
+    text-align: center; padding: 20px; font-size: 11px;
+    color: var(--body-text-color-subdued); font-family: var(--font-mono);
+}
 """
 
 # Runs on app load (gr.Blocks(js=...)). Pure-JS "fake sticky": a permanent rAF

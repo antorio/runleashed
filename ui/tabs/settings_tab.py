@@ -25,7 +25,7 @@ def settings_tab():
             with gr.Column():
                 with gr.Accordion("Performance", open=True):
                     settings_controls.append(gr.Dropdown(providerlist, label="Provider", value=roop.globals.CFG.provider, elem_id='provider', interactive=True))
-                    max_threads = gr.Slider(1, 32, value=roop.globals.CFG.max_threads, label="Max. Number of Threads", info='default: 3', step=1.0, interactive=True)
+                    max_threads = gr.Slider(1, 32, value=roop.globals.CFG.max_threads, label="Max. Number of Threads", info='default: 8', step=1.0, interactive=True)
                     memory_limit = gr.Slider(0, 128, value=roop.globals.CFG.memory_limit, label="Max. Memory to use (Gb)", info='0 meaning no limit', step=1.0, interactive=True)
                     settings_controls.append(gr.Checkbox(label="Force CPU for Face Analyser", value=roop.globals.CFG.force_cpu, elem_id='force_cpu', interactive=True))
                     chk_det_size = gr.Checkbox(label="Use default Det-Size", value=True, elem_id='default_det_size', interactive=True)
@@ -34,8 +34,20 @@ def settings_tab():
                     settings_controls.append(gr.Dropdown(image_formats, label="Image Output Format", info='default: png', value=roop.globals.CFG.output_image_format, elem_id='output_image_format', interactive=True))
                     settings_controls.append(gr.Dropdown(video_codecs, label="Video Codec", info='default: libx264', value=roop.globals.CFG.output_video_codec, elem_id='output_video_codec', interactive=True))
                     settings_controls.append(gr.Dropdown(video_formats, label="Video Output Format", info='default: mp4', value=roop.globals.CFG.output_video_format, elem_id='output_video_format', interactive=True))
-                    video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", info='default: 14', step=1.0, interactive=True)
-            # ---------------- COLUMN 2: Interface & maintenance ----------------
+                    video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", info='default: 18', step=1.0, interactive=True)
+            # ---------------- COLUMN 2: Expression Restorer ----------------
+            with gr.Column():
+                with gr.Accordion("Expression Restorer — live tuning (no restart needed)", open=True):
+                    expr_global_controls = []
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock (translation)", value=roop.globals.expression_pose_lock, elem_id='expression_pose_lock', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock — scale", value=roop.globals.expression_pose_lock_scale, elem_id='expression_pose_lock_scale', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Pose lock — rotation", value=roop.globals.expression_pose_lock_rotation, elem_id='expression_pose_lock_rotation', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=roop.globals.expression_full_pipeline, elem_id='expression_full_pipeline', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=roop.globals.expression_stitching, elem_id='expression_stitching', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Serialize (stable at high threads)", value=roop.globals.expression_serialize, elem_id='expression_serialize', interactive=True))
+                    expr_power = gr.Slider(0.0, 5.0, value=roop.globals.expression_power, step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
+                    expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
+            # ---------------- COLUMN 3: Interface & maintenance ----------------
             with gr.Column():
                 with gr.Accordion("Interface & maintenance", open=True):
                     themes = gr.Dropdown(available_themes, label="Theme", info="Change needs complete restart", value=roop.globals.CFG.selected_theme)
@@ -49,18 +61,6 @@ def settings_tab():
                         button_apply_settings = gr.Button("Apply Settings", variant='primary')
                         button_apply_restart = gr.Button("Restart Server")
                     button_clean_temp = gr.Button("Clean temp folder")
-            # ---------------- COLUMN 3: Expression Restorer ----------------
-            with gr.Column():
-                with gr.Accordion("Expression Restorer — live tuning (no restart needed)", open=True):
-                    expr_global_controls = []
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock (translation)", value=roop.globals.expression_pose_lock, elem_id='expression_pose_lock', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock — scale", value=roop.globals.expression_pose_lock_scale, elem_id='expression_pose_lock_scale', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock — rotation", value=roop.globals.expression_pose_lock_rotation, elem_id='expression_pose_lock_rotation', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=roop.globals.expression_full_pipeline, elem_id='expression_full_pipeline', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=roop.globals.expression_stitching, elem_id='expression_stitching', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Serialize (stable at high threads)", value=roop.globals.expression_serialize, elem_id='expression_serialize', interactive=True))
-                    expr_power = gr.Slider(0.0, 5.0, value=roop.globals.expression_power, step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
-                    expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
 
     for c in expr_global_controls:
         c.select(fn=on_option_changed)
