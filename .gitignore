@@ -15,8 +15,8 @@ models/liveportrait/live_portrait_feature_extractor.onnx
 models/liveportrait/live_portrait_generator.onnx
 models/liveportrait/live_portrait_motion_extractor.onnx
 models/liveportrait/live_portrait_stitcher.onnx
-roop/__pycache__/capturer.cpython-311.pyc
-roop/__pycache__/face_stabilizer.cpython-311.pyc
+roop/__pycache__/
+roop/__pycache__/*
 roop/__pycache__/face_util.cpython-311.pyc
 roop/__pycache__/FaceSet.cpython-311.pyc
 roop/__pycache__/ffmpeg_writer.cpython-311.pyc
@@ -33,3 +33,9 @@ roop/__pycache__/vr_util.cpython-311.pyc
 ui/__pycache__/globals.cpython-311.pyc
 ui/__pycache__/main.cpython-311.pyc
 ui/__pycache__/theme.cpython-311.pyc
+.gradio/certificate.pem
+ui/tabs/__pycache__/facemgr_tab.cpython-311.pyc
+ui/tabs/__pycache__/faceswap_tab.cpython-311.pyc
+ui/tabs/__pycache__/settings_tab.cpython-311.pyc
+models/
+temp/

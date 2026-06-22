@@ -9,7 +9,7 @@ import ui.globals as uii
 from ui.tabs.faceswap_tab import faceswap_tab
 from ui.tabs.facemgr_tab import facemgr_tab
 from ui.tabs.settings_tab import settings_tab
-from ui.theme import runleashed_theme, runleashed_css, runleashed_head
+from ui.theme import runleashed_theme, runleashed_css, runleashed_js
 
 roop.globals.keep_fps = None
 roop.globals.keep_frames = None
@@ -57,7 +57,7 @@ def run():
             allowed_paths = ['/content/drive/']
         ssl_verify = False if server_name == '0.0.0.0' else True
         with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}',
-                       theme=runleashed_theme, css=runleashed_css, head=runleashed_head,
+                       theme=runleashed_theme, css=runleashed_css, js=runleashed_js,
                        delete_cache=(60, 86400)) as ui:
             # ---- header: bold title + version, then env badges inline ----
             with gr.Row(variant='compact', elem_id="app_header"):
