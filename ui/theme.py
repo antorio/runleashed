@@ -76,3 +76,39 @@ button.secondary:hover { background: #f9fafb !important; border-color: #d1d5db !
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }
 """
+
+# Injected into <head>. Native position:sticky silently fails when an ancestor
+# establishes a containing block via transform / filter / perspective / contain
+# (Gradio uses transforms for tab transitions). This neutralises those on the
+# ancestors of #center_stage so the CSS sticky actually engages. It also retries
+# because Gradio mounts tab content dynamically after first paint.
+runleashed_head = """
+<script>
+(function () {
+  function clearBlockers() {
+    var el = document.querySelector('#center_stage');
+    if (!el) return false;
+    var n = el.parentElement;
+    while (n && n !== document.documentElement) {
+      var s = getComputedStyle(n);
+      if (s.transform !== 'none' || s.filter !== 'none' ||
+          s.perspective !== 'none' || /(paint|layout|content|strict)/.test(s.contain)) {
+        n.style.setProperty('transform', 'none', 'important');
+        n.style.setProperty('filter', 'none', 'important');
+        n.style.setProperty('perspective', 'none', 'important');
+        n.style.setProperty('contain', 'none', 'important');
+      }
+      n = n.parentElement;
+    }
+    return true;
+  }
+  var tries = 0;
+  var iv = setInterval(function () {
+    if (clearBlockers() || ++tries > 60) clearInterval(iv);
+  }, 250);
+  window.addEventListener('load', clearBlockers);
+  document.addEventListener('click', function () { setTimeout(clearBlockers, 50); });
+})();
+</script>
+"""
+
