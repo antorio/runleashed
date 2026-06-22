@@ -1,10 +1,10 @@
 """
 Gradio theme + CSS for the redesigned roop-unleashed UI.
 Orange primary, Source Sans Pro / IBM Plex Mono, light surfaces,
-sleeker buttons, sticky center column, hidden component-type glyphs.
+sleeker buttons, sticky center column, bold section titles.
 
-Tuned against Gradio 5.9.1. If a selector ever stops matching after a
-Gradio upgrade, inspect the element and adjust the class here.
+Tuned against Gradio 5.9.1. If a selector stops matching after a Gradio
+upgrade, inspect the element and adjust the class here.
 """
 
 import gradio as gr
@@ -29,22 +29,26 @@ runleashed_theme = gr.themes.Default(
 )
 
 runleashed_css = """
-:root { --layout-gap: 14px; }
-.gradio-container { max-width: 1500px !important; margin: 0 auto !important; }
+/* ---------- width: fill the page (was capped ~75%) ---------- */
+.gradio-container { max-width: 1840px !important; width: 96% !important; margin: 0 auto !important; }
 
 /* ---------- header ---------- */
 #app_header { padding: 12px 4px 2px; border: none !important; background: transparent !important; }
 #app_header h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
 #versions, #versions * { font-family: var(--font-mono); font-size: 12.5px; color: var(--body-text-color-subdued); }
 
-/* ---------- tabs: plain text, orange underline ---------- */
+/* ---------- tabs: plain text, orange when active ---------- */
 button.selected { color: var(--primary-600) !important; }
 
-/* ---------- hide the little component-type glyph next to block labels ---------- */
+/* ---------- section (accordion) titles: BOLD, to match inner labels ---------- */
+.label-wrap > span,
+button.label-wrap span,
+.gradio-accordion .label-wrap span { font-weight: 700 !important; font-size: 15px !important; color: var(--body-text-color) !important; }
+
+/* ---------- hide the small component-type glyph next to block labels ---------- */
 .block > label > span > svg.svelte-43sxxs,
 span[data-testid="block-label"] svg,
-.block-label svg,
-label.svelte-1b6s6s svg { display: none !important; }
+.block-label svg { display: none !important; }
 
 /* ---------- sleeker / lighter secondary buttons ---------- */
 button.secondary {
@@ -61,18 +65,20 @@ button.secondary:hover { background: #f9fafb !important; border-color: #d1d5db !
 /* ---------- trim empty upload/file dropzones ---------- */
 #filelist .file-preview, #filelist { min-height: 0 !important; }
 
-/* ---------- sticky center preview column ---------- */
-#center_stage { position: sticky !important; top: 8px !important; align-self: flex-start !important; }
-
-/* ---------- Video FPS: info text becomes a hover tooltip ---------- */
-#fps_field { position: relative; }
-#fps_field .info, #fps_field p, #fps_field span.svelte-1gfkn6j {
-  position: absolute; z-index: 20; top: 100%; left: 0;
-  visibility: hidden; opacity: 0; transition: opacity .12s;
-  background: #1f2937; color: #fff; padding: 4px 8px; border-radius: 6px;
-  font-size: 12px; max-width: 230px; margin-top: 2px; pointer-events: none; white-space: normal;
+/* ---------- STICKY center preview column ----------
+   sticky breaks if the flex row stretches the column to full height or an
+   ancestor scrolls. Force the row to top-align and let the column be its
+   own height so it can stick against page scroll. */
+#swap_row { align-items: flex-start !important; }
+#swap_row > div { overflow: visible !important; }
+.tabs, .tabitem, .tabitem > div, .gradio-container > .main { overflow: visible !important; }
+#center_stage {
+  position: sticky !important;
+  top: 8px !important;
+  align-self: flex-start !important;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
-#fps_field:hover .info, #fps_field:hover p { visibility: visible; opacity: 1; }
 
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }

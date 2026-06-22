@@ -55,7 +55,7 @@ def faceswap_tab():
             with gr.Column():
                 gr.Markdown(' ')
 
-        with gr.Row():
+        with gr.Row(elem_id="swap_row"):
             # ----------------------------- LEFT : inputs -----------------------------
             with gr.Column(scale=3, min_width=300):
                 input_faces = gr.Gallery(label="Input Faces", allow_preview=False, preview=False, height=132, columns=64, object_fit="cover", interactive=False, elem_classes="facegrid")
@@ -119,7 +119,7 @@ def faceswap_tab():
             with gr.Column(scale=3, min_width=320):
                 with gr.Accordion(label="Model & frames", open=True):
                     ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
-                    forced_fps = gr.Number(value=0, label="Video FPS", info='Overrides detected fps if not 0', precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
+                    forced_fps = gr.Number(value=0, label="Video FPS", precision=0, minimum=0, maximum=120, interactive=True)
 
                 with gr.Accordion(label="Face selection", open=True):
                     selected_face_detection = gr.Dropdown(swap_choices, value="First found", show_label=False)
@@ -128,7 +128,7 @@ def faceswap_tab():
 
                 with gr.Accordion(label="Expression", open=False):
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
-                    sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Expression amount", info="How strongly to apply the target's expression")
+                    sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
                     with gr.Row():
                         cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
