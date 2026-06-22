@@ -66,19 +66,12 @@ button.secondary:hover { background: #f9fafb !important; border-color: #d1d5db !
 #filelist .file-preview, #filelist { min-height: 0 !important; }
 
 /* ---------- STICKY center preview column ----------
-   sticky breaks if the flex row stretches the column to full height or an
-   ancestor scrolls. Force the row to top-align and let the column be its
-   own height so it can stick against page scroll. */
+   Minimal + non-invasive: top-align the row so the column isn't stretched to
+   full height, then stick it. No forced overflow on ancestors (that broke the
+   layout / caused overlapping panels). If it still scrolls, see STICKY note
+   in INTEGRATION.md. */
 #swap_row { align-items: flex-start !important; }
-#swap_row > div { overflow: visible !important; }
-.tabs, .tabitem, .tabitem > div, .gradio-container > .main { overflow: visible !important; }
-#center_stage {
-  position: sticky !important;
-  top: 8px !important;
-  align-self: flex-start !important;
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-}
+#center_stage { position: sticky !important; top: 8px !important; align-self: flex-start !important; }
 
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }
