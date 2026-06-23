@@ -143,11 +143,37 @@ class Expression_LivePortrait():
              temp_exp, motion_points) = self._extract_motion(src)
             target_exp = self._extract_motion(drv)[5]
 
-            rotation = lpu.get_rotation_matrix(
-                lpu.headpose_pred_to_degree(pitch),
-                lpu.headpose_pred_to_degree(yaw),
-                lpu.headpose_pred_to_degree(roll),
-            )
+            pitch_deg = lpu.headpose_pred_to_degree(pitch)
+            yaw_deg   = lpu.headpose_pred_to_degree(yaw)
+            roll_deg  = lpu.headpose_pred_to_degree(roll)
+
+            # ---- Pose gate ----------------------------------------------------
+            # LivePortrait's motion extractor / generator are out-of-distribution
+            # at extreme head pose (head tilted far back / strong profile) and
+            # produce a smeared, melted warp. Fade the restorer out between
+            # 'soft' and 'hard' degrees of max(|pitch|,|yaw|) and skip it entirely
+            # past 'hard' -- keeping the clean swapped face instead of a broken
+            # restore. Normal poses (< soft) are untouched.
+            if getattr(roop.globals, 'expression_pose_gate', True):
+                pose_mag = max(abs(float(np.ravel(pitch_deg)[0])),
+                               abs(float(np.ravel(yaw_deg)[0])))
+                soft = float(getattr(roop.globals, 'expression_pose_gate_soft', 45.0))
+                hard = float(getattr(roop.globals, 'expression_pose_gate_hard', 65.0))
+                if pose_mag >= hard:
+                    gate = 0.0
+                elif pose_mag <= soft:
+                    gate = 1.0
+                else:
+                    gate = 1.0 - (pose_mag - soft) / max(hard - soft, 1e-6)
+                if getattr(roop.globals, 'expression_debug', False):
+                    print(f"[expr-posegate] pitch={float(np.ravel(pitch_deg)[0]):.1f} "
+                          f"yaw={float(np.ravel(yaw_deg)[0]):.1f} mag={pose_mag:.1f} "
+                          f"gate={gate:.2f}")
+                if gate <= 0.0:
+                    return swapped_crop
+                factor = factor * gate
+
+            rotation = lpu.get_rotation_matrix(pitch_deg, yaw_deg, roll_deg)
             applied = lpu.build_applied_expression(
                 temp_exp, target_exp, factor, use_eyes, use_mouth, use_brows)
 

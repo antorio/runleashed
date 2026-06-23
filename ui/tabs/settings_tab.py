@@ -53,8 +53,11 @@ def settings_tab():
                     expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=roop.globals.expression_stitching, elem_id='expression_stitching', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Serialize (stable at high threads)", value=roop.globals.expression_serialize, elem_id='expression_serialize', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Debug log [expr-delta] (A/B in console)", value=roop.globals.expression_debug, elem_id='expression_debug', interactive=True))
+                    expr_global_controls.append(gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=roop.globals.expression_pose_gate, elem_id='expression_pose_gate', interactive=True))
                     expr_power = gr.Slider(0.0, 5.0, value=roop.globals.expression_power, step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
                     expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
+                    expr_gate_soft = gr.Slider(10.0, 90.0, value=roop.globals.expression_pose_gate_soft, step=1.0, label="Pose gate · start fade (°)", info='max(|pitch|,|yaw|) where restorer begins fading', interactive=True)
+                    expr_gate_hard = gr.Slider(10.0, 90.0, value=roop.globals.expression_pose_gate_hard, step=1.0, label="Pose gate · full skip (°)", info='angle where restorer is skipped (clean swap)', interactive=True)
                 with gr.Accordion("Face mask & paste-back — live tuning", open=False):
                     accuracy_controls.append(gr.Checkbox(label="Convex-hull face matte", info="Follows face contour (less jaw/neck/bg bleed). Off = rectangle.", value=roop.globals.use_face_hull_mask, elem_id='use_face_hull_mask', interactive=True))
                     _hf = gr.Slider(0.0, 1.5, value=roop.globals.face_hull_forehead, step=0.05, label="Hull forehead extend", info='cover forehead (default 0.6)', interactive=True)
@@ -89,6 +92,8 @@ def settings_tab():
         c.select(fn=on_option_changed)
     expr_power.release(fn=lambda v, n='expression_power': on_global_value_changed(v, n), inputs=[expr_power])
     expr_border.release(fn=lambda v, n='expression_blend_border': on_global_value_changed(v, n), inputs=[expr_border])
+    expr_gate_soft.release(fn=lambda v, n='expression_pose_gate_soft': on_global_value_changed(v, n), inputs=[expr_gate_soft])
+    expr_gate_hard.release(fn=lambda v, n='expression_pose_gate_hard': on_global_value_changed(v, n), inputs=[expr_gate_hard])
 
     chk_det_size.select(fn=on_option_changed)
 

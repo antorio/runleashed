@@ -118,6 +118,13 @@ lp_crop_vy = -0.125
 expression_pose_lock = True
 expression_pose_lock_scale = True
 expression_pose_lock_rotation = False
+# Pose gate: LivePortrait is out-of-distribution at extreme head pose (far back /
+# strong profile) and smears the face. Fade the restorer out between 'soft' and
+# 'hard' degrees of max(|pitch|,|yaw|), skipping it entirely past 'hard' (keeps
+# the clean swapped face). soft/hard in degrees. Set gate False to disable.
+expression_pose_gate = True
+expression_pose_gate_soft = 45.0
+expression_pose_gate_hard = 65.0
 # Print per-frame expression diagnostics ([expr-delta]: signal before/after the
 # pose lock, % of expression kept, Kabsch rotation angle removed, restorer crop
 # resolution). Use this to A/B the pose-lock toggles and expression_power live.
