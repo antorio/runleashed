@@ -172,6 +172,7 @@ class Expression_LivePortrait():
             # Deterministic pose lock (model-free): keep the driving keypoints'
             # global position/scale identical to the source so only the local
             # expression transfers -- removes the head shift / enlarge / drift.
+            kp_driving_raw = kp_driving  # snapshot before pose lock (diagnostics)
             if getattr(roop.globals, 'expression_pose_lock', True):
                 kp_driving = lpu.lock_pose(
                     kp_driving, kp_source,
@@ -218,12 +219,35 @@ class Expression_LivePortrait():
             gen_out = self._run_session(self.generator, feeds)[0]
 
             restored = lpu.parse_output(gen_out)
-            if getattr(roop.globals, 'profile_timings', False):
+            if getattr(roop.globals, 'expression_debug', False) or getattr(roop.globals, 'profile_timings', False):
                 try:
                     ed = float(np.max(np.abs(target_exp.reshape(-1) - temp_exp.reshape(-1))))
-                    kd = float(np.max(np.abs(kp_driving.reshape(-1) - kp_source.reshape(-1))))
-                    print(f"[expr-delta] exp|max={ed:.4f}  kp|max={kd:.4f}  "
-                          f"full_pipeline={full}  stitch={self.stitcher is not None}  factor={factor:.2f}")
+                    sig_before = float(np.abs(kp_driving_raw - kp_source).sum())
+                    sig_after = float(np.abs(kp_driving - kp_source).sum())
+                    kept = 100.0 * sig_after / (sig_before + 1e-9)
+                    # Kabsch rotation angle (deg) that pose-lock would remove between
+                    # raw driving and source -- large value => rotation_lock is
+                    # absorbing local expression into a fake global rotation.
+                    ang = 0.0
+                    try:
+                        kd0 = (kp_driving_raw - kp_driving_raw.mean(axis=1, keepdims=True))[0]
+                        ks0 = (kp_source - kp_source.mean(axis=1, keepdims=True))[0]
+                        Hm = kd0.T @ ks0
+                        U, S, Vt = np.linalg.svd(Hm)
+                        dsgn = np.sign(np.linalg.det(Vt.T @ U.T))
+                        Rm = Vt.T @ np.diag([1.0, 1.0, dsgn]) @ U.T
+                        ang = float(np.degrees(np.arccos(np.clip((np.trace(Rm) - 1.0) / 2.0, -1.0, 1.0))))
+                    except Exception:
+                        pass
+                    ch, cw = swapped_crop.shape[:2]
+                    pl = getattr(roop.globals, 'expression_pose_lock', True)
+                    pls = getattr(roop.globals, 'expression_pose_lock_scale', True)
+                    plr = getattr(roop.globals, 'expression_pose_lock_rotation', False)
+                    pw = getattr(roop.globals, 'expression_power', 1.0)
+                    print(f"[expr-delta] exp|max={ed:.4f}  sig_before={sig_before:.4f}  "
+                          f"sig_after={sig_after:.4f}  kept={kept:.0f}%  kabsch_rot={ang:.1f}deg  "
+                          f"crop={cw}x{ch}  lock={pl}/scale={pls}/rot={plr}  power={pw:.2f}  "
+                          f"factor={factor:.2f}  full={full}  stitch={self.stitcher is not None}")
                 except Exception:
                     pass
 

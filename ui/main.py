@@ -18,7 +18,11 @@ roop.globals.use_batch = None
 
 
 def prepare_environment():
-    roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
+    _out = getattr(roop.globals.CFG, 'output_folder', None)
+    if _out and str(_out).strip():
+        roop.globals.output_path = str(_out).strip()
+    else:
+        roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
     os.makedirs(roop.globals.output_path, exist_ok=True)
     if not roop.globals.CFG.use_os_temp_folder:
         os.environ["TEMP"] = os.environ["TMP"] = os.path.abspath(os.path.join(os.getcwd(), "temp"))

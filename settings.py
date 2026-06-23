@@ -35,6 +35,7 @@ class Settings:
         self.provider = self.default_get(data, 'provider', 'cuda')
         self.force_cpu = self.default_get(data, 'force_cpu', False)
         self.output_template = self.default_get(data, 'output_template', '{file}_{time}')
+        self.output_folder = self.default_get(data, 'output_folder', '/content/drive/MyDrive/c')
         self.use_os_temp_folder = self.default_get(data, 'use_os_temp_folder', False)
         self.output_show_video = self.default_get(data, 'output_show_video', True)
         self.launch_browser = self.default_get(data, 'launch_browser', True)
@@ -60,6 +61,7 @@ class Settings:
             'provider' : self.provider,
             'force_cpu' : self.force_cpu,
 			'output_template' : self.output_template,
+            'output_folder' : self.output_folder,
             'use_os_temp_folder' : self.use_os_temp_folder,
             'output_show_video' : self.output_show_video,
             'allowed_paths' : self.allowed_paths
