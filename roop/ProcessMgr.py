@@ -761,7 +761,12 @@ class ProcessMgr():
             brow_center = brows.mean(axis=0)
             up = brow_center - chin  # vector pointing from chin up to the brows
             forehead = brows + up * float(roop.globals.face_hull_forehead)
-            hull_pts = np.vstack([jaw, forehead]).astype(np.float32)
+            # Use ALL 68 landmarks (+ forehead extension), not just the jaw outline.
+            # Frontally the jaw is the outer contour so the hull is identical, but at
+            # profile the NOSE protrudes past the jaw line -- if only jaw+forehead is
+            # hulled the nose tip falls outside the matte and the swap is clipped just
+            # before the nose. Including the nose/eye/mouth points fixes that.
+            hull_pts = np.vstack([pts_crop, forehead]).astype(np.float32)
 
             # Expand the hull outward from its centroid so it covers the whole
             # face up to the jaw/hairline (compensates the later erosion in
