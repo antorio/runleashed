@@ -188,19 +188,28 @@ def start() -> None:
 
 def get_processing_plugins(masking_engine):
     processors = {  "faceswap": {}}
-    if masking_engine is not None:
-        processors.update({masking_engine: {}})
 
-    # expression restorer runs after the swap, before any enhancer
+    # Expression restorer runs right after the swap.
     if getattr(roop.globals, 'expression_restorer', False):
         processors.update({"expression_restorer": {}})
-    
+
+    # Occlusion mask now runs AFTER the expression restorer, so the ER no longer
+    # warps the restored occluders (hands/hair/etc). By default it runs before the
+    # enhancer; set mask_after_enhancer=True to run it last so occluders are not
+    # touched by the enhancer either.
+    mask_after_enhancer = getattr(roop.globals, 'mask_after_enhancer', False)
+    if masking_engine is not None and not mask_after_enhancer:
+        processors.update({masking_engine: {}})
+
     if roop.globals.selected_enhancer == 'GFPGAN':
         processors.update({"gfpgan": {}})
     elif roop.globals.selected_enhancer == 'Codeformer':
         processors.update({"codeformer": {}})
     elif roop.globals.selected_enhancer == 'Restoreformer++':
         processors.update({"restoreformer++": {}})
+
+    if masking_engine is not None and mask_after_enhancer:
+        processors.update({masking_engine: {}})
     return processors
 
 

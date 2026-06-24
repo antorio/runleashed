@@ -58,6 +58,11 @@ face_hull_min_area = 0.22
 # target region before paste-back. Off by default (inswapper already does
 # reasonable color); enable if source/target lighting differs a lot.
 use_color_transfer = False
+# Occlusion mask ordering: the engine mask (Clip2Seg/XSeg/FaceParser) always runs
+# after the expression restorer now. False (default) = mask runs before the
+# enhancer; True = mask runs after the enhancer too, so restored occluders
+# (hands/hair/etc) are not altered by the enhancer.
+mask_after_enhancer = False
 
 # Multi-angle detection: try rotated copies of the frame so sideways / upside
 # down faces are found and landmarked upright. 'off' | 'fallback' | 'always'.

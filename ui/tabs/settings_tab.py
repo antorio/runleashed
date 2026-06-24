@@ -60,6 +60,7 @@ def settings_tab():
                     expr_gate_hard = gr.Slider(10.0, 90.0, value=roop.globals.expression_pose_gate_hard, step=1.0, label="Pose gate · full skip (°)", info='angle where restorer is skipped (clean swap)', interactive=True)
                 with gr.Accordion("Face mask & paste-back — live tuning", open=False):
                     accuracy_controls.append(gr.Checkbox(label="Convex-hull face matte", info="Follows face contour (less jaw/neck/bg bleed). Off = rectangle.", value=roop.globals.use_face_hull_mask, elem_id='use_face_hull_mask', interactive=True))
+                    accuracy_controls.append(gr.Checkbox(label="Occlusion mask after enhancer", info="Mask always runs after the ER. On = also after the enhancer, so occluders (hands/hair) stay un-enhanced.", value=roop.globals.mask_after_enhancer, elem_id='mask_after_enhancer', interactive=True))
                     _hf = gr.Slider(0.0, 1.5, value=roop.globals.face_hull_forehead, step=0.05, label="Hull forehead extend", info='cover forehead (default 0.6)', interactive=True)
                     _hd = gr.Slider(0.0, 0.5, value=roop.globals.face_hull_dilate, step=0.01, label="Hull dilate", info='grow matte outward (default 0.10)', interactive=True)
                     _hm = gr.Slider(0.0, 0.5, value=roop.globals.face_hull_min_area, step=0.01, label="Hull min area (degeneracy guard)", info='fallback to ellipse below this at extreme angles (default 0.22)', interactive=True)

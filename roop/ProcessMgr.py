@@ -680,6 +680,12 @@ class ProcessMgr():
                 scale_factor = 0.0
             elif p.type == 'mask':
                 fake_frame = self.process_mask(p, aligned_img, fake_frame)
+                # When the mask runs after the enhancer, the enhanced face already
+                # exists and is the dominant source in paste_upscale's blend, so
+                # the occluder must be restored onto it too -- otherwise it would
+                # be diluted/lost. (Before the enhancer, enhanced_frame is None.)
+                if enhanced_frame is not None:
+                    enhanced_frame = self.process_mask(p, aligned_img, enhanced_frame)
             elif p.type == 'expression':
                 fake_frame = self.process_expression(p, aligned_img, fake_frame, frame, target_face)
             else:
