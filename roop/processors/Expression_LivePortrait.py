@@ -273,7 +273,8 @@ class Expression_LivePortrait():
                     print(f"[expr-delta] exp|max={ed:.4f}  sig_before={sig_before:.4f}  "
                           f"sig_after={sig_after:.4f}  kept={kept:.0f}%  kabsch_rot={ang:.1f}deg  "
                           f"crop={cw}x{ch}  lock={pl}/scale={pls}/rot={plr}  power={pw:.2f}  "
-                          f"factor={factor:.2f}  full={full}  stitch={self.stitcher is not None}")
+                          f"factor={factor:.2f}  full={full}  "
+                          f"stitch={bool(getattr(roop.globals,'expression_stitching',False) and self.stitcher is not None)}")
                 except Exception:
                     pass
 
