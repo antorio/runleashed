@@ -19,15 +19,26 @@ roop.globals.use_batch = None
 
 def prepare_environment():
     _out = getattr(roop.globals.CFG, 'output_folder', None)
-    if _out and str(_out).strip():
-        roop.globals.output_path = str(_out).strip()
-    else:
-        roop.globals.output_path = os.path.abspath(os.path.join(os.getcwd(), "output"))
-    os.makedirs(roop.globals.output_path, exist_ok=True)
+    candidate = str(_out).strip() if (_out and str(_out).strip()) else None
+    fallback = os.path.abspath(os.path.join(os.getcwd(), "output"))
+    chosen = None
+    if candidate:
+        try:
+            os.makedirs(candidate, exist_ok=True)
+            chosen = candidate
+        except OSError:
+            # Configured folder isn't available here (e.g. a Colab '/content'
+            # path on a local machine). Fall back to ./output instead of crashing.
+            print(f"[runleashed] output folder '{candidate}' is not writable here; "
+                  f"falling back to '{fallback}'.")
+    if chosen is None:
+        os.makedirs(fallback, exist_ok=True)
+        chosen = fallback
+    roop.globals.output_path = chosen
     if not roop.globals.CFG.use_os_temp_folder:
         os.environ["TEMP"] = os.environ["TMP"] = os.path.abspath(os.path.join(os.getcwd(), "temp"))
-    os.makedirs(os.environ["TEMP"], exist_ok=True)
-    os.environ["GRADIO_TEMP_DIR"] = os.environ["TEMP"]
+    os.makedirs(os.environ.get("TEMP", os.path.abspath(os.path.join(os.getcwd(), "temp"))), exist_ok=True)
+    os.environ["GRADIO_TEMP_DIR"] = os.environ.get("TEMP", os.path.abspath(os.path.join(os.getcwd(), "temp")))
     os.environ['GRADIO_ANALYTICS_ENABLED'] = '0'
 
 def run():
@@ -58,7 +69,12 @@ def run():
             server_port = None
         allowed_paths = roop.globals.CFG.allowed_paths
         if allowed_paths is None:
-            allowed_paths = ['/content/drive/']
+            allowed_paths = []
+        # Always allow the actual output dir and the working dir so local runs can
+        # serve uploads/results (Colab's /content/drive entry stays harmless).
+        for _p in (roop.globals.output_path, os.getcwd()):
+            if _p and _p not in allowed_paths:
+                allowed_paths.append(_p)
         ssl_verify = False if server_name == '0.0.0.0' else True
         with gr.Blocks(title=f'{roop.metadata.name} {roop.metadata.version}',
                        theme=runleashed_theme, css=runleashed_css, js=runleashed_js,

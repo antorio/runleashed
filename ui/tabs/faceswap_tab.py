@@ -75,7 +75,7 @@ def faceswap_tab():
                     bt_add_local = gr.Button('Add', size='sm', scale=1, min_width=70)
 
                 with gr.Accordion(label="Advanced Masking", open=False):
-                    selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"], value="None", label="Face masking engine")
+                    selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"], value="DFL XSeg", label="Face masking engine")
                     clip_text = gr.Textbox(label="List of objects to mask and restore back on fake face", value="cup,hands,hair,banana", interactive=False)
                     chk_showmaskoffsets = gr.Checkbox(label="Show mask overlay in preview", value=False, interactive=True)
                     chk_restoreoriginalmouth = gr.Checkbox(label="Restore original mouth area", value=False, interactive=True)
@@ -117,7 +117,7 @@ def faceswap_tab():
 
             # ----------------------------- RIGHT : settings -----------------------------
             with gr.Column(scale=3, min_width=320):
-                with gr.Accordion(label="Model & frames", open=True):
+                with gr.Accordion(label="Model & frames", open=False):
                     ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
                     forced_fps = gr.Number(value=0, label="Video FPS", precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
 
@@ -126,7 +126,7 @@ def faceswap_tab():
                     num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps")
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
-                with gr.Accordion(label="Expression", open=False):
+                with gr.Accordion(label="Expression", open=True):
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
                     sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
                     with gr.Row(elem_id="expr_checks"):
@@ -134,14 +134,14 @@ def faceswap_tab():
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
 
-                with gr.Accordion(label="Enhancement", open=False):
-                    ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="128px", label="Subsample upscale to", interactive=True)
+                with gr.Accordion(label="Enhancement", open=True):
+                    ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="256px", label="Subsample upscale to", interactive=True)
                     ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "GFPGAN", "Restoreformer++"], value="None", label="Select post-processing")
                     ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
 
                 with gr.Accordion(label="Video & output", open=False):
                     video_swapping_method = gr.Dropdown(["Extract Frames to media", "In-Memory processing"], value="In-Memory processing", label="Select video processing method", interactive=True)
-                    no_face_action = gr.Dropdown(choices=no_face_choices, value=no_face_choices[0], label="Action on no face detected", interactive=True)
+                    no_face_action = gr.Dropdown(choices=no_face_choices, value=no_face_choices[1], label="Action on no face detected", interactive=True)
                     autorotate = gr.Checkbox(label="Auto rotate horizontal Faces", value=True)
                     roop.globals.skip_audio = gr.Checkbox(label="Skip audio", value=False)
                     roop.globals.keep_frames = gr.Checkbox(label="Keep Frames (relevant only when extracting frames)", value=False)

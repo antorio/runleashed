@@ -1004,6 +1004,13 @@ class ProcessMgr():
         img_mask = cv2.resize(img_mask, (target.shape[1], target.shape[0]))
         img_mask = np.reshape(img_mask, [img_mask.shape[0],img_mask.shape[1],1])
 
+        # The restore-source (frame = original aligned crop) must match the target
+        # resolution before blending. They differ when masking the enhanced face
+        # (e.g. 512) while the aligned crop is smaller (e.g. 256) -- this happens
+        # when the occlusion mask runs after the enhancer.
+        if frame.shape[:2] != target.shape[:2]:
+            frame = cv2.resize(frame, (target.shape[1], target.shape[0]))
+
         if self.options.show_face_masking:
             result = (1 - img_mask) * frame.astype(np.float32)
             return np.uint8(result)

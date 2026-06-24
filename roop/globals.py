@@ -42,7 +42,7 @@ use_landmark_alignment = True
 # Build the paste-back matte from the face convex hull (follows the face
 # contour) instead of a plain rectangle, removing jaw/neck/background bleed
 # at angled poses. Falls back to the rectangle if landmarks are unavailable.
-use_face_hull_mask = True
+use_face_hull_mask = False
 # How far above the eyebrows to extend the hull to cover the forehead,
 # as a fraction of the chin->brow distance.
 face_hull_forehead = 0.6
@@ -122,7 +122,7 @@ lp_crop_vy = -0.125
 # head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.
 expression_pose_lock = True
 expression_pose_lock_scale = True
-expression_pose_lock_rotation = False
+expression_pose_lock_rotation = True
 # Pose gate: LivePortrait is out-of-distribution at extreme head pose (far back /
 # strong profile) and smears the face. Fade the restorer out between 'soft' and
 # 'hard' degrees of max(|pitch|,|yaw|), skipping it entirely past 'hard' (keeps
@@ -138,7 +138,7 @@ expression_debug = False
 # crashes when Max Threads is high). True is safe; False = max speed, fewer threads.
 expression_serialize = True
 
-no_face_action = 0
+no_face_action = 1                  # default: Retry rotated
 
 processing = False
 
