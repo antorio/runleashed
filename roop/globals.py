@@ -117,6 +117,14 @@ expression_stitching = False
 lp_crop_size = 512
 lp_crop_scale = 2.3
 lp_crop_vy = -0.125
+# Full-pipeline paste-back calibration: corrects the generator's systematic
+# output-framing offset (face slightly shifted/enlarged/rotated after the 2.3x
+# crop round-trip). Tune live while watching the preview with full pipeline ON.
+# scale 1.0 = no change; dx/dy are fractions of the crop size; rot in degrees.
+expression_lp_cal_scale = 1.0
+expression_lp_cal_dx = 0.0
+expression_lp_cal_dy = 0.0
+expression_lp_cal_rot = 0.0
 # Model-free pose lock for the expression restorer: re-centre (and re-scale)
 # driving keypoints to the source so only the local expression transfers and the
 # head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.

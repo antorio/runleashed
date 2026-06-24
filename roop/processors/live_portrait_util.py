@@ -212,6 +212,26 @@ def compose_affine(A, B):
     return (A3 @ B3)[:2].astype(np.float32)
 
 
+def apply_back_calibration(back_M, w, h, scale=1.0, dx_frac=0.0, dy_frac=0.0, rot_deg=0.0):
+    """Correction applied to the full-pipeline paste-back matrix to cancel the
+    LivePortrait generator's systematic output-framing offset (the face ends up
+    slightly shifted / enlarged / rotated after the 2.3x crop round-trip).
+
+    Builds a small similarity C (scale + rotation about the OUTPUT crop centre,
+    then translation) in arcface-crop space and returns C o back_M. dx/dy are
+    fractions of the crop size (resolution-independent); rot in degrees.
+    Identity (1.0, 0, 0, 0) leaves back_M unchanged."""
+    cx, cy = w * 0.5, h * 0.5
+    r = np.deg2rad(float(rot_deg))
+    a = float(scale) * np.cos(r)
+    b = float(scale) * np.sin(r)
+    dx = float(dx_frac) * w
+    dy = float(dy_frac) * h
+    C = np.array([[a, -b, cx - a * cx + b * cy + dx],
+                  [b,  a, cy - b * cx - a * cy + dy]], dtype=np.float32)
+    return compose_affine(C, back_M)
+
+
 def apply_stitching(session, kp_source, kp_driving, log=False, invert=True):
     """Run the LivePortrait stitching net to lock the driving keypoints onto the
     source pose/position (removes the global drift / 'rotation' the generator

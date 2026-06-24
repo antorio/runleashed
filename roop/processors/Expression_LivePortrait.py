@@ -280,6 +280,20 @@ class Expression_LivePortrait():
             # Paste the 512 result back into the arcface crop space (full pipeline)
             # or just resize (fallback), then feather so borders stay clean.
             if full and back_M is not None:
+                cs   = float(getattr(roop.globals, 'expression_lp_cal_scale', 1.0))
+                cdx  = float(getattr(roop.globals, 'expression_lp_cal_dx', 0.0))
+                cdy  = float(getattr(roop.globals, 'expression_lp_cal_dy', 0.0))
+                crot = float(getattr(roop.globals, 'expression_lp_cal_rot', 0.0))
+                if cs != 1.0 or cdx != 0.0 or cdy != 0.0 or crot != 0.0:
+                    back_M = lpu.apply_back_calibration(
+                        back_M, swapped_crop.shape[1], swapped_crop.shape[0],
+                        cs, cdx, cdy, crot)
+                if getattr(roop.globals, 'expression_debug', False):
+                    sx = float(np.hypot(back_M[0, 0], back_M[1, 0]))
+                    rr = float(np.degrees(np.arctan2(back_M[1, 0], back_M[0, 0])))
+                    print(f"[lp-geom] back_M scale={sx:.4f} rot={rr:.1f}deg "
+                          f"t=({back_M[0,2]:.1f},{back_M[1,2]:.1f}) "
+                          f"cal(scale={cs:.3f},dx={cdx:+.3f},dy={cdy:+.3f},rot={crot:+.1f})")
                 restored = cv2.warpAffine(
                     restored, back_M,
                     (swapped_crop.shape[1], swapped_crop.shape[0]),

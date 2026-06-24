@@ -58,6 +58,10 @@ def settings_tab():
                     expr_border = gr.Slider(0.0, 0.5, value=roop.globals.expression_blend_border, step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
                     expr_gate_soft = gr.Slider(10.0, 90.0, value=roop.globals.expression_pose_gate_soft, step=1.0, label="Pose gate · start fade (°)", info='max(|pitch|,|yaw|) where restorer begins fading', interactive=True)
                     expr_gate_hard = gr.Slider(10.0, 90.0, value=roop.globals.expression_pose_gate_hard, step=1.0, label="Pose gate · full skip (°)", info='angle where restorer is skipped (clean swap)', interactive=True)
+                    expr_cal_scale = gr.Slider(0.80, 1.20, value=roop.globals.expression_lp_cal_scale, step=0.005, label="Full pipeline · cal scale", info='paste-back size correction (1.0 = none)', interactive=True)
+                    expr_cal_dx = gr.Slider(-0.15, 0.15, value=roop.globals.expression_lp_cal_dx, step=0.005, label="Full pipeline · cal shift X", info='horizontal nudge (fraction of crop)', interactive=True)
+                    expr_cal_dy = gr.Slider(-0.15, 0.15, value=roop.globals.expression_lp_cal_dy, step=0.005, label="Full pipeline · cal shift Y", info='vertical nudge (fraction of crop)', interactive=True)
+                    expr_cal_rot = gr.Slider(-10.0, 10.0, value=roop.globals.expression_lp_cal_rot, step=0.5, label="Full pipeline · cal rotation (°)", info='paste-back rotation correction', interactive=True)
                 with gr.Accordion("Face mask & paste-back — live tuning", open=False):
                     accuracy_controls.append(gr.Checkbox(label="Convex-hull face matte", info="Follows face contour (less jaw/neck/bg bleed). Off = rectangle.", value=roop.globals.use_face_hull_mask, elem_id='use_face_hull_mask', interactive=True))
                     accuracy_controls.append(gr.Checkbox(label="Occlusion mask after enhancer", info="Mask always runs after the ER. On = also after the enhancer, so occluders (hands/hair) stay un-enhanced.", value=roop.globals.mask_after_enhancer, elem_id='mask_after_enhancer', interactive=True))
@@ -95,6 +99,10 @@ def settings_tab():
     expr_border.release(fn=lambda v, n='expression_blend_border': on_global_value_changed(v, n), inputs=[expr_border])
     expr_gate_soft.release(fn=lambda v, n='expression_pose_gate_soft': on_global_value_changed(v, n), inputs=[expr_gate_soft])
     expr_gate_hard.release(fn=lambda v, n='expression_pose_gate_hard': on_global_value_changed(v, n), inputs=[expr_gate_hard])
+    expr_cal_scale.release(fn=lambda v, n='expression_lp_cal_scale': on_global_value_changed(v, n), inputs=[expr_cal_scale])
+    expr_cal_dx.release(fn=lambda v, n='expression_lp_cal_dx': on_global_value_changed(v, n), inputs=[expr_cal_dx])
+    expr_cal_dy.release(fn=lambda v, n='expression_lp_cal_dy': on_global_value_changed(v, n), inputs=[expr_cal_dy])
+    expr_cal_rot.release(fn=lambda v, n='expression_lp_cal_rot': on_global_value_changed(v, n), inputs=[expr_cal_rot])
 
     chk_det_size.select(fn=on_option_changed)
 
