@@ -75,7 +75,7 @@ def faceswap_tab():
                     bt_add_local = gr.Button('Add', size='sm', scale=1, min_width=70)
 
                 with gr.Accordion(label="Advanced Masking", open=False):
-                    selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)"], value="DFL XSeg", label="Face masking engine")
+                    selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)", "FF XSeg 1", "FF XSeg 2", "FF XSeg 3", "FF XSeg (combined)"], value="DFL XSeg", label="Face masking engine")
                     clip_text = gr.Textbox(label="List of objects to mask and restore back on fake face", value="cup,hands,hair,banana", interactive=False)
                     chk_showmaskoffsets = gr.Checkbox(label="Show mask overlay in preview", value=False, interactive=True)
                     chk_restoreoriginalmouth = gr.Checkbox(label="Restore original mouth area", value=False, interactive=True)
@@ -550,6 +550,14 @@ def map_mask_engine(selected_mask_engine, clip_text):
           mask_engine = None
     elif selected_mask_engine == "DFL XSeg":
         mask_engine = "mask_xseg"
+    elif selected_mask_engine == "FF XSeg 1":
+        mask_engine = "mask_ffxseg1"
+    elif selected_mask_engine == "FF XSeg 2":
+        mask_engine = "mask_ffxseg2"
+    elif selected_mask_engine == "FF XSeg 3":
+        mask_engine = "mask_ffxseg3"
+    elif selected_mask_engine == "FF XSeg (combined)":
+        mask_engine = "mask_ffxseg_many"
     elif selected_mask_engine == "Face Parser (BiSeNet)":
         mask_engine = "mask_faceparser"
     else:
@@ -609,6 +617,14 @@ def on_preview_mask(swap_model, frame_num, files, clip_text, mask_engine):
           mask_engine = None
     elif mask_engine == "DFL XSeg":
         mask_engine = "mask_xseg"
+    elif mask_engine == "FF XSeg 1":
+        mask_engine = "mask_ffxseg1"
+    elif mask_engine == "FF XSeg 2":
+        mask_engine = "mask_ffxseg2"
+    elif mask_engine == "FF XSeg 3":
+        mask_engine = "mask_ffxseg3"
+    elif mask_engine == "FF XSeg (combined)":
+        mask_engine = "mask_ffxseg_many"
     elif mask_engine == "Face Parser (BiSeNet)":
         mask_engine = "mask_faceparser"
     options = ProcessOptions(swap_model, get_processing_plugins(mask_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,

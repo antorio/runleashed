@@ -139,6 +139,11 @@ def pre_check() -> bool:
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/GFPGANv1.4.onnx'])
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/restoreformer_plus_plus.onnx'])
     util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx'])
+    # FaceFusion DeepFaceLab-XSeg occluder variants (same arch, different weights).
+    # Used by the "FF XSeg 1/2/3" and "FF XSeg (combined)" masking engines.
+    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_1.onnx'])
+    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_2.onnx'])
+    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.2.0/xseg_3.onnx'])
     # BiSeNet face-parsing model for the optional "Face Parser" masking engine.
     # Saved as ./models/bisenet_resnet_34.onnx (matches Mask_FaceParser lookup).
     util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/bisenet_resnet_34.onnx'])

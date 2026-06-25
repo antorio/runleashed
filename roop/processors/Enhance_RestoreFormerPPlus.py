@@ -29,9 +29,7 @@ class Enhance_RestoreFormerPPlus():
             model_path = resolve_relative_path('../models/restoreformer_plus_plus.onnx')
             self.model_restoreformerpplus = onnxruntime.InferenceSession(model_path, None, providers=__import__('roop.utilities',fromlist=['tuned_execution_providers']).tuned_execution_providers())
             self.model_inputs = self.model_restoreformerpplus.get_inputs()
-            model_outputs = self.model_restoreformerpplus.get_outputs()
-            self.io_binding = self.model_restoreformerpplus.io_binding()
-            self.io_binding.bind_output(model_outputs[0].name, self.devicename)
+            self.model_outputs = self.model_restoreformerpplus.get_outputs()
 
     def Run(self, source_faceset: FaceSet, target_face: Face, temp_frame: Frame) -> Frame:
         # preprocess
@@ -42,9 +40,13 @@ class Enhance_RestoreFormerPPlus():
         temp_frame = (temp_frame - 0.5) / 0.5
         temp_frame = np.expand_dims(temp_frame, axis=0).transpose(0, 3, 1, 2)
         
-        self.io_binding.bind_cpu_input(self.model_inputs[0].name, temp_frame) # .astype(np.float32)
-        self.model_restoreformerpplus.run_with_iobinding(self.io_binding)
-        ort_outs = self.io_binding.copy_outputs_to_cpu()
+        # Fresh io_binding per call (thread-safe): a shared binding races across
+        # the worker threads and produces stale/jittered frames every so often.
+        io_binding = self.model_restoreformerpplus.io_binding()
+        io_binding.bind_cpu_input(self.model_inputs[0].name, temp_frame)
+        io_binding.bind_output(self.model_outputs[0].name, self.devicename)
+        self.model_restoreformerpplus.run_with_iobinding(io_binding)
+        ort_outs = io_binding.copy_outputs_to_cpu()
         result = ort_outs[0][0]
         del ort_outs 
         
@@ -59,6 +61,4 @@ class Enhance_RestoreFormerPPlus():
     def Release(self):
         del self.model_restoreformerpplus
         self.model_restoreformerpplus = None
-        del self.io_binding
-        self.io_binding = None
 
