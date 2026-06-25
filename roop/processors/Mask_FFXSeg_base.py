@@ -43,7 +43,7 @@ class FFXSegBase:
             for fn in self.model_files:
                 model_path = resolve_relative_path('../models/' + fn)
                 sess = onnxruntime.InferenceSession(
-                    model_path, None, providers=roop.globals.execution_providers)
+                    model_path, None, providers=__import__('roop.utilities',fromlist=['tuned_execution_providers']).tuned_execution_providers())
                 self.sessions.append((sess, sess.get_inputs(), sess.get_outputs()))
 
     def Run(self, img1, keywords: str) -> Frame:

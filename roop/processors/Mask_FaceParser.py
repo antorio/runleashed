@@ -71,7 +71,7 @@ class Mask_FaceParser():
                 return
             onnxruntime.set_default_logger_severity(3)
             self.model_parser = onnxruntime.InferenceSession(
-                model_path, None, providers=roop.globals.execution_providers
+                model_path, None, providers=__import__('roop.utilities',fromlist=['tuned_execution_providers']).tuned_execution_providers()
             )
             inp = self.model_parser.get_inputs()[0]
             self.input_name = inp.name
