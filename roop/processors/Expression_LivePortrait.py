@@ -113,10 +113,15 @@ class Expression_LivePortrait():
                     M_arc = np.asarray(context['M'], dtype=np.float32)
                     H, W = frame.shape[:2]
                     dsize = int(getattr(roop.globals, 'lp_crop_size', 512))
+                    # roll of the arcface alignment -> upright the LP crop the same
+                    # way, so a strongly tilted head is not fed sideways to LP.
+                    lp_roll = float(np.degrees(np.arctan2(M_arc[1, 0], M_arc[0, 0]))) \
+                        if getattr(roop.globals, 'lp_crop_roll_align', True) else 0.0
                     M_lp = lpu.lp_crop_matrix(
                         context['landmarks'], dsize=dsize,
                         scale=float(getattr(roop.globals, 'lp_crop_scale', 2.3)),
-                        vy_ratio=float(getattr(roop.globals, 'lp_crop_vy', -0.125)))
+                        vy_ratio=float(getattr(roop.globals, 'lp_crop_vy', -0.125)),
+                        roll_deg=lp_roll)
                     # rebuild the swapped frame (paste the arcface swapped crop back)
                     invM = cv2.invertAffineTransform(M_arc)
                     face_full = cv2.warpAffine(swapped_crop, invM, (W, H))

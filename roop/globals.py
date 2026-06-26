@@ -117,6 +117,9 @@ expression_stitching = False
 lp_crop_size = 512
 lp_crop_scale = 2.3
 lp_crop_vy = -0.125
+# Roll-align the full-pipeline LP crop (upright the face inside it, like arcface).
+# Fixes misaligned/ghosted output when the head is strongly tilted (~90 deg).
+lp_crop_roll_align = True
 # Full-pipeline paste-back calibration: corrects the generator's systematic
 # output-framing offset (face slightly shifted/enlarged/rotated after the 2.3x
 # crop round-trip). Tune live while watching the preview with full pipeline ON.

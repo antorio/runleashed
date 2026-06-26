@@ -693,7 +693,20 @@ class ProcessMgr():
             elif p.type == 'expression':
                 fake_frame = self.process_expression(p, aligned_img, fake_frame, frame, target_face)
             else:
-                enhanced_frame, scale_factor = p.Run(self.input_face_datas[face_index], target_face, fake_frame)
+                # Enhancer pass. Guard against a failed/garbage result (e.g. a
+                # transient CUDA OOM on a conv -> NaN -> black crop) which would
+                # paste as a raw rectangular box around the head. On failure we
+                # keep enhanced_frame = None so the un-enhanced face is pasted
+                # instead (a slightly softer single frame, far less visible).
+                try:
+                    _ef, _sf = p.Run(self.input_face_datas[face_index], target_face, fake_frame)
+                    if _ef is not None and float(np.asarray(_ef).max()) > 1:
+                        enhanced_frame, scale_factor = _ef, _sf
+                    elif getattr(roop.globals, 'expression_debug', False):
+                        print(f"[enhancer] '{p.processorname}' returned an empty/black frame; using un-enhanced")
+                except Exception as _e:
+                    if getattr(roop.globals, 'expression_debug', False):
+                        print(f"[enhancer] '{p.processorname}' failed on a frame ({_e}); using un-enhanced")
             if _prof:
                 print(f"[timing]    processor '{p.processorname}' ({p.type}) = {(_pt.perf_counter()-_ps)*1000:.0f}ms")
 

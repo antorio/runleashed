@@ -185,12 +185,17 @@ def feather_blend(fg, bg, border=0.2):
     return (fg.astype(_np.float32) * m + bg.astype(_np.float32) * (1.0 - m)).astype(_np.uint8)
 
 
-def lp_crop_matrix(landmarks_2d, dsize=512, scale=2.3, vy_ratio=-0.125):
-    """LivePortrait-style upright crop transform (frame -> dsize x dsize).
+def lp_crop_matrix(landmarks_2d, dsize=512, scale=2.3, vy_ratio=-0.125, roll_deg=0.0):
+    """LivePortrait-style crop transform (frame -> dsize x dsize).
     Centres on the landmark bbox, scales so the face fills the crop with the
     standard LivePortrait framing, and shifts up (vy_ratio<0) to include the
-    forehead. Returns a 2x3 affine. This is the crop the motion/feature
-    extractors were trained for -- far better than the tight arcface crop."""
+    forehead. This is the crop the motion/feature extractors were trained for.
+
+    roll_deg rotates the crop so the face is UPRIGHT inside it (pass the rotation
+    of the arcface matrix). LivePortrait was trained on upright faces; without
+    this, a strongly rolled head (~90 deg sideways) is fed sideways and the
+    generator produces a misaligned/ghosted warp. roll_deg=0 keeps the old
+    pure scale+translate behaviour. Returns a 2x3 affine."""
     pts = np.asarray(landmarks_2d, dtype=np.float32)[:, :2]
     x_min, y_min = pts.min(0)
     x_max, y_max = pts.max(0)
@@ -199,10 +204,16 @@ def lp_crop_matrix(landmarks_2d, dsize=512, scale=2.3, vy_ratio=-0.125):
     size = max(float(x_max - x_min), float(y_max - y_min)) * float(scale)
     if size < 1e-3:
         size = 1.0
-    cy += size * float(vy_ratio)
+    th = np.deg2rad(float(roll_deg))
+    cos, sin = float(np.cos(th)), float(np.sin(th))
+    # shift the crop centre up along the face-local vertical (rotated by roll)
+    cx += sin * size * float(vy_ratio)
+    cy += cos * size * float(vy_ratio)
     s = float(dsize) / size
-    return np.array([[s, 0.0, dsize * 0.5 - s * cx],
-                     [0.0, s, dsize * 0.5 - s * cy]], dtype=np.float32)
+    a, b = s * cos, -s * sin
+    c, d = s * sin,  s * cos
+    return np.array([[a, b, dsize * 0.5 - (a * cx + b * cy)],
+                     [c, d, dsize * 0.5 - (c * cx + d * cy)]], dtype=np.float32)
 
 
 def compose_affine(A, B):
