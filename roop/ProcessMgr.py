@@ -1006,6 +1006,7 @@ class ProcessMgr():
                 'frame': frame,
                 'landmarks': lmk,
                 'M': getattr(target_face, 'matrix', None),
+                'pose': getattr(target_face, 'pose', None),
             }
         restored = processor.Run(
             aligned_img, fake_frame, factor,

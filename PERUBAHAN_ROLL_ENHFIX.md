@@ -30,3 +30,16 @@ Fix (enhancer-aware order di get_processing_plugins): untuk RestoreFormer++ &
 CodeFormer, occlusion mask DIPAKSA berjalan SETELAH enhancer -> mereka cuma melihat
 wajah swap bersih. GFPGAN TIDAK diubah (tetap ikut toggle mask_after_enhancer,
 default mask-sebelum). Jadi GFPGAN yang sudah benar tidak terganggu.
+
+## 4. Pose gate tidak menangkap "wajah dari belakang" (rear/extreme yaw)
+Gejala: LP distorsi saat wajah hampir membelakangi kamera; tanpa LP bagus.
+Akar: pose gate lama hanya pakai pitch/yaw dari motion-extractor LP, yang
+UNDERESTIMATE yaw di view rear (wajah terlalu tersembunyi) -> gate tak ter-trigger.
+Fix: gate kini juga memakai pose dari face analyser (landmark_3d_68: pitch,yaw),
+yang andal lebih jauh dari profil, lalu ambil sinyal terkuat
+(pose_mag = max(LP pitch/yaw, detektor pitch/yaw)). Jadi saat kepala membelakangi,
+detektor melaporkan yaw besar -> gate skip -> swap bersih dipakai (tak distorsi).
+Berlaku di jalur in-place & full pipeline. context kini membawa target_face.pose.
+Debug: [expr-posegate] kini cetak lp(...) dan det(...) terpisah.
+
+Validasi: py_compile + uji gate gabungan (rear ter-skip walau LP underestimate).

@@ -160,8 +160,19 @@ class Expression_LivePortrait():
             # past 'hard' -- keeping the clean swapped face instead of a broken
             # restore. Normal poses (< soft) are untouched.
             if getattr(roop.globals, 'expression_pose_gate', True):
-                pose_mag = max(abs(float(np.ravel(pitch_deg)[0])),
-                               abs(float(np.ravel(yaw_deg)[0])))
+                lp_pitch = abs(float(np.ravel(pitch_deg)[0]))
+                lp_yaw   = abs(float(np.ravel(yaw_deg)[0]))
+                pose_mag = max(lp_pitch, lp_yaw)
+                # The LP motion extractor underestimates yaw at near-rear views
+                # (face mostly hidden), so the gate would miss a head turned away.
+                # Also use the face analyser's own pose (pitch,yaw,roll), which is
+                # reliable further past profile, and take the strongest signal.
+                det = context.get('pose') if context is not None else None
+                det_p = det_y = 0.0
+                if det is not None and len(det) >= 2:
+                    det_p = abs(float(det[0]))
+                    det_y = abs(float(det[1]))
+                    pose_mag = max(pose_mag, det_p, det_y)
                 soft = float(getattr(roop.globals, 'expression_pose_gate_soft', 45.0))
                 hard = float(getattr(roop.globals, 'expression_pose_gate_hard', 65.0))
                 if pose_mag >= hard:
@@ -171,8 +182,8 @@ class Expression_LivePortrait():
                 else:
                     gate = 1.0 - (pose_mag - soft) / max(hard - soft, 1e-6)
                 if getattr(roop.globals, 'expression_debug', False):
-                    print(f"[expr-posegate] pitch={float(np.ravel(pitch_deg)[0]):.1f} "
-                          f"yaw={float(np.ravel(yaw_deg)[0]):.1f} mag={pose_mag:.1f} "
+                    print(f"[expr-posegate] lp(p={lp_pitch:.1f},y={lp_yaw:.1f}) "
+                          f"det(p={det_p:.1f},y={det_y:.1f}) mag={pose_mag:.1f} "
                           f"gate={gate:.2f}")
                 if gate <= 0.0:
                     return swapped_crop
