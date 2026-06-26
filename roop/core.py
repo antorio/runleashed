@@ -203,6 +203,12 @@ def get_processing_plugins(masking_engine):
     # enhancer; set mask_after_enhancer=True to run it last so occluders are not
     # touched by the enhancer either.
     mask_after_enhancer = getattr(roop.globals, 'mask_after_enhancer', False)
+    # RestoreFormer++ / CodeFormer are codebook restorers that colour-burn when
+    # they enhance a crop containing a restored occluder (non-face pixels). Force
+    # the mask AFTER them so they only ever see the clean swapped face. GFPGAN is
+    # robust to this and keeps the user's chosen order (default: before).
+    if roop.globals.selected_enhancer in ('Restoreformer++', 'Codeformer'):
+        mask_after_enhancer = True
     if masking_engine is not None and not mask_after_enhancer:
         processors.update({masking_engine: {}})
 
