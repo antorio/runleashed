@@ -16,6 +16,7 @@ settings_controls = []
 def settings_tab():
     from roop.core import suggest_execution_providers
     global providerlist
+    settings_controls.clear()   # avoid stale-control accumulation across server restarts
 
     providerlist = suggest_execution_providers()
     with gr.Tab("Settings"):
@@ -121,7 +122,7 @@ def settings_tab():
     video_quality.input(fn=lambda a,b='video_quality':on_settings_changed_misc(a,b), inputs=[video_quality])
 
     button_clean_temp.click(fn=clean_temp)
-    button_apply_settings.click(apply_settings, inputs=[themes, input_server_name, input_server_port, output_template])
+    button_apply_settings.click(apply_settings, inputs=[themes, input_server_name, input_server_port, output_template, max_threads, memory_limit, video_quality])
     button_apply_restart.click(restart)
 
 
@@ -158,6 +159,11 @@ def on_option_changed(evt: gr.SelectData):
 
 def on_settings_changed_misc(new_val, attribname):
     if hasattr(roop.globals.CFG, attribname):
+        if attribname in ('max_threads', 'memory_limit', 'video_quality'):
+            try:
+                new_val = int(round(float(new_val)))
+            except (TypeError, ValueError):
+                pass
         setattr(roop.globals.CFG, attribname, new_val)
     else:
         print("Didn't find attrib!")
@@ -191,13 +197,18 @@ def clean_temp():
     return None,None,None,None
 
 
-def apply_settings(themes, input_server_name, input_server_port, output_template):
+def apply_settings(themes, input_server_name, input_server_port, output_template, max_threads, memory_limit, video_quality):
     from ui.main import show_msg
 
     roop.globals.CFG.selected_theme = themes
     roop.globals.CFG.server_name = input_server_name
     roop.globals.CFG.server_port = input_server_port
     roop.globals.CFG.output_template = output_template
+    # Make the button authoritative for the sliders too: read what the user sees
+    # right now, so threads/memory/quality no longer depend on the live .input event.
+    roop.globals.CFG.max_threads = int(round(float(max_threads)))
+    roop.globals.CFG.memory_limit = int(round(float(memory_limit)))
+    roop.globals.CFG.video_quality = int(round(float(video_quality)))
     roop.globals.CFG.save()
     show_msg('Settings saved')
 
