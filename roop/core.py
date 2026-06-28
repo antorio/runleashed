@@ -198,17 +198,18 @@ def get_processing_plugins(masking_engine):
     if getattr(roop.globals, 'expression_restorer', False):
         processors.update({"expression_restorer": {}})
 
-    # Occlusion mask now runs AFTER the expression restorer, so the ER no longer
-    # warps the restored occluders (hands/hair/etc). By default it runs before the
-    # enhancer; set mask_after_enhancer=True to run it last so occluders are not
-    # touched by the enhancer either.
+    # Occlusion mask runs AFTER the expression restorer (so the ER never warps the
+    # restored occluders like hands/hair). The mask/enhancer order is controlled
+    # SOLELY by the user's 'mask_after_enhancer' toggle, for EVERY enhancer
+    # (GFPGAN, CodeFormer, RestoreFormer++): off (default) = mask before the
+    # enhancer; on = mask runs last.
+    # Note: RestoreFormer++ / CodeFormer are codebook restorers that can colour-burn
+    # when they enhance a crop that still contains a restored occluder (non-face
+    # pixels). If you use them on footage WITH occluders and see colour burn, tick
+    # 'mask after enhancer' so they only ever see the clean swapped face. We do NOT
+    # force this anymore -- e.g. frontal / occluder-free clips don't need it, and
+    # forcing it added slight jitter -- so the choice is yours.
     mask_after_enhancer = getattr(roop.globals, 'mask_after_enhancer', False)
-    # RestoreFormer++ / CodeFormer are codebook restorers that colour-burn when
-    # they enhance a crop containing a restored occluder (non-face pixels). Force
-    # the mask AFTER them so they only ever see the clean swapped face. GFPGAN is
-    # robust to this and keeps the user's chosen order (default: before).
-    if roop.globals.selected_enhancer in ('Restoreformer++', 'Codeformer'):
-        mask_after_enhancer = True
     if masking_engine is not None and not mask_after_enhancer:
         processors.update({masking_engine: {}})
 
