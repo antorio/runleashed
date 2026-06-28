@@ -138,7 +138,7 @@ expression_pose_lock_rotation = True
 # strong profile) and smears the face. Fade the restorer out between 'soft' and
 # 'hard' degrees of max(|pitch|,|yaw|), skipping it entirely past 'hard' (keeps
 # the clean swapped face). soft/hard in degrees. Set gate False to disable.
-expression_pose_gate = True
+expression_pose_gate = False
 expression_pose_gate_soft = 45.0
 expression_pose_gate_hard = 65.0
 # Print per-frame expression diagnostics ([expr-delta]: signal before/after the

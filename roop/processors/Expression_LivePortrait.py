@@ -159,7 +159,7 @@ class Expression_LivePortrait():
             # 'soft' and 'hard' degrees of max(|pitch|,|yaw|) and skip it entirely
             # past 'hard' -- keeping the clean swapped face instead of a broken
             # restore. Normal poses (< soft) are untouched.
-            if getattr(roop.globals, 'expression_pose_gate', True):
+            if getattr(roop.globals, 'expression_pose_gate', False):
                 lp_pitch = abs(float(np.ravel(pitch_deg)[0]))
                 lp_yaw   = abs(float(np.ravel(yaw_deg)[0]))
                 pose_mag = max(lp_pitch, lp_yaw)
