@@ -180,9 +180,15 @@ profile_timings = False
 # conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is
 # tight. 'HEURISTIC' avoids that long search at a negligible quality cost.
 cudnn_conv_algo_search = 'HEURISTIC'
-# False = don't reserve max cuDNN conv workspace (saves GBs of GPU RAM; prevents
-# the CUDA out-of-memory when many models are loaded). True only if you have RAM.
-cudnn_conv_use_max_workspace = False
+# cuDNN conv workspace. False = don't reserve max workspace (saves GBs of GPU RAM)
+# BUT forbids cuDNN's fastest conv algos (Winograd/FFT) -> ~2x slower per frame
+# across the WHOLE pipeline (swapper+enhancer+mask+LP+detector all read this knob).
+# True = fast convs (restores normal speed); zero effect on output quality, it only
+# changes which mathematically-equivalent algorithm cuDNN picks.
+# On a 24GB GPU (L4) with the full LivePortrait pipeline OFF this fits comfortably.
+# If you enable the full LP pipeline (4 nets) + a heavy enhancer and hit CUDA OOM,
+# set this back to False to trade speed for memory.
+cudnn_conv_use_max_workspace = True
 
 # Preview delivery: the Gradio preview image is sent to the browser (often over a
 # slow gradio.live share tunnel) as a full-resolution PNG, which can take a long
