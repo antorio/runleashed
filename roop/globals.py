@@ -176,10 +176,14 @@ CFG: Settings = None
 # slowness is a per-frame model reload or slow inference. Set False once diagnosed.
 profile_timings = False
 # onnxruntime CUDA convolution algo search. The onnxruntime default is
-# 'EXHAUSTIVE', which can take a very long time on the first inference of large
-# conv models (e.g. the LivePortrait generator) and can repeat when GPU memory is
-# tight. 'HEURISTIC' avoids that long search at a negligible quality cost.
-cudnn_conv_algo_search = 'HEURISTIC'
+# cuDNN conv algorithm search. ORT default is 'EXHAUSTIVE': it benchmarks conv
+# algorithms ONCE per unique shape at the first inference (a one-time startup cost
+# of a few seconds), then caches the fastest pick -- ideal for VIDEO where every
+# frame is the same size, so steady-state fps is maximal. 'HEURISTIC' skips that
+# search (faster startup) but often picks a slower algo -> ~2x slower per frame.
+# Quality is identical either way (the chosen algos are mathematically equivalent).
+# Use 'HEURISTIC' only if the one-time EXHAUSTIVE search OOMs on a very tight GPU.
+cudnn_conv_algo_search = 'EXHAUSTIVE'
 # cuDNN conv workspace. False = don't reserve max workspace (saves GBs of GPU RAM)
 # BUT forbids cuDNN's fastest conv algos (Winograd/FFT) -> ~2x slower per frame
 # across the WHOLE pipeline (swapper+enhancer+mask+LP+detector all read this knob).
