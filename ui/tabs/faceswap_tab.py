@@ -101,7 +101,7 @@ def faceswap_tab():
                     fake_preview = gr.Checkbox(label="Face swap frames", value=False)
                     bt_refresh_preview = gr.Button("Refresh", variant='secondary', size='sm')
                     bt_use_face_from_preview = gr.Button("Use Face from this Frame", variant='primary', size='sm')
-                preview_frame_num = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=True)
+                preview_frame_num = gr.Slider(1, 2, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=True)
                 with gr.Row(equal_height=True):
                     text_frame_clip = gr.Markdown('in / out · range [0 - 0]')
                     set_frame_start = gr.Button("Set as Start", size='sm')
@@ -530,7 +530,6 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
 
     roop.globals.execution_threads = int(round(float(roop.globals.CFG.max_threads)))
-    print(f'[threads] execution_threads={roop.globals.execution_threads} (CFG.max_threads={roop.globals.CFG.max_threads})')
     mask = layers[0] if layers is not None else None
     face_index = SELECTED_INPUT_FACE_INDEX
     if len(roop.globals.INPUT_FACESETS) <= face_index:
@@ -709,7 +708,6 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     is_processing = True            
     yield gr.Button(variant="secondary", interactive=False), gr.Button(variant="primary", interactive=True), None
     roop.globals.execution_threads = int(round(float(roop.globals.CFG.max_threads)))
-    print(f'[threads] execution_threads={roop.globals.execution_threads} (CFG.max_threads={roop.globals.CFG.max_threads})')
     roop.globals.video_encoder = roop.globals.CFG.output_video_codec
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None

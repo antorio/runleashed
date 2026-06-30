@@ -39,3 +39,4 @@ ui/tabs/__pycache__/faceswap_tab.cpython-311.pyc
 ui/tabs/__pycache__/settings_tab.cpython-311.pyc
 models/
 temp/
+output/
