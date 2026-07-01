@@ -1,6 +1,7 @@
 import os
 import shutil
 import pathlib
+import traceback
 import gradio as gr
 import roop.utilities as util
 import roop.globals
@@ -712,7 +713,15 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     roop.globals.video_quality = roop.globals.CFG.video_quality
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
 
-    batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
+    batch_error = None
+    try:
+        batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
+    except Exception as e:
+        # Never leave the UI stuck in the "processing" state on a finalization
+        # hiccup (mux/audio/cleanup): fall through and always restore idle below.
+        batch_error = e
+        traceback.print_exc()
+        gr.Warning(f'Processing stopped with an error: {e}')
     is_processing = False
     outdir = pathlib.Path(roop.globals.output_path)
     outfiles = [str(item) for item in outdir.rglob("*") if item.is_file()]
@@ -725,7 +734,7 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
 def stop_swap():
     roop.globals.processing = False
     gr.Info('Aborting processing - please wait for the remaining threads to be stopped')
-    return gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),None
+    return gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False)
 
 
 def on_fps_changed(fps):
@@ -796,9 +805,15 @@ def on_resultfiles_finished(files):
     selected_index = 0
     if files is None or len(files) < 1:
         return None, None
-    
-    filename = files[selected_index].name
-    return display_output(filename)
+
+    f = files[selected_index]
+    filename = getattr(f, 'name', None) or getattr(f, 'path', None) or (f.get('path') if isinstance(f, dict) else None) or str(f)
+    try:
+        return display_output(filename)
+    except Exception as e:
+        traceback.print_exc()
+        gr.Warning(f'Could not preview result: {e}')
+        return gr.Image(visible=False), gr.Video(visible=False)
 
 
 def get_gradio_output_format():

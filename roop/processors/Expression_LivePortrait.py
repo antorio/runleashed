@@ -193,6 +193,22 @@ class Expression_LivePortrait():
             applied = lpu.build_applied_expression(
                 temp_exp, target_exp, factor, use_eyes, use_mouth, use_brows)
 
+            # Temporal smoothing of the expression vector (video wobble fix). Keyed
+            # by the face centre so multi-face stays separated. No-op when disabled.
+            _sm = context.get('exp_smoother') if context is not None else None
+            if _sm is not None:
+                try:
+                    _lm = context.get('landmarks') if context is not None else None
+                    if _lm is not None:
+                        _p = np.asarray(_lm, dtype=np.float32)[:, :2]
+                        _c = _p.mean(axis=0)
+                        _sz = float(np.linalg.norm(_p.max(0) - _p.min(0))) or 200.0
+                    else:
+                        _c, _sz = np.zeros(2, np.float32), 200.0
+                    applied = _sm.smooth(applied, _c, _sz)
+                except Exception:
+                    pass
+
             kp_source = lpu.transform_motion_points(
                 motion_points, rotation, temp_exp, scale, translation)
             kp_driving = lpu.transform_motion_points(
