@@ -91,6 +91,8 @@ def settings_tab():
                     accuracy_controls.append(gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), elem_id='landmark_smoothing', interactive=True))
                     _ls = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother (default 0.7)', interactive=True)
                     accuracy_sliders.append((_ls, 'landmark_smoothing_strength'))
+                    _ldz = gr.Slider(0.0, 0.02, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Landmark dead-zone", info='freezes sub-threshold jitter while head is still; ~0.006≈2.4px on a 400px face (default); raise for less wobble, 0=off', interactive=True)
+                    accuracy_sliders.append((_ldz, 'landmark_smoothing_deadzone'))
                     accuracy_controls.append(gr.Dropdown(["robust", "median", "mean"], label="Faceset average mode", info="how multi-image source identity is blended", value=lambda a='faceset_average_mode': getattr(roop.globals, a), elem_id='faceset_average_mode', interactive=True))
                     _ot = gr.Slider(0.0, 1.0, value=lambda a='faceset_outlier_threshold': getattr(roop.globals, a), step=0.05, label="Faceset outlier threshold", info='lower = stricter outlier drop (default 0.6)', interactive=True)
                     accuracy_sliders.append((_ot, 'faceset_outlier_threshold'))

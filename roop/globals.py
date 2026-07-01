@@ -77,6 +77,11 @@ multi_angle_angles = [90, 270, 180]
 # batches. strength in [0,1]; higher = smoother.
 landmark_smoothing = True
 landmark_smoothing_strength = 0.7
+# soft dead-zone as a fraction of face size: keypoint motion below this is treated
+# as detector noise and frozen out (kills still-head landmark wobble). ~0.006 of a
+# ~400px face is ~2.4px and cuts still-head jitter ~60% while barely affecting real
+# motion. 0 disables it. Tune via the "Landmark dead-zone" slider.
+landmark_smoothing_deadzone = 0.006
 force_landmark_smoothing = False
 
 # Faceset (multi-image source) identity averaging. 'robust' (default) drops

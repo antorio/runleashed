@@ -122,7 +122,8 @@ class ProcessMgr():
 
         # (re)create the temporal landmark smoother for this run
         self.stabilizer = LandmarkStabilizer(
-            strength=roop.globals.landmark_smoothing_strength
+            strength=roop.globals.landmark_smoothing_strength,
+            deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
 
         roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]

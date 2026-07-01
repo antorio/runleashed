@@ -17,12 +17,19 @@ class LandmarkStabilizer:
     """
 
     def __init__(self, strength: float = 0.7, motion_frac: float = 0.05,
-                 match_frac: float = 0.6, max_age: int = 8):
+                 match_frac: float = 0.6, max_age: int = 8,
+                 deadzone_frac: float = 0.0):
         # strength in [0,1]; higher = smoother. Maps to a floor on alpha.
         self.alpha_min = float(np.clip(1.0 - strength, 0.08, 1.0))
         self.motion_frac = motion_frac
         self.match_frac = match_frac
         self.max_age = max_age
+        # soft dead-zone: keypoint motion below deadzone_frac*face_size is treated
+        # as detector noise and absorbed (alpha -> 0, i.e. the smoothed landmarks
+        # freeze), which kills the "landmarks wobble while the head is still"
+        # jitter. Real motion above the dead-zone is followed as before. 0 = off
+        # (identical to the previous behaviour).
+        self.deadzone_frac = max(0.0, float(deadzone_frac))
         self.tracks = []
         self._lock = Lock()
 
@@ -79,8 +86,23 @@ class LandmarkStabilizer:
                     motion = float(np.linalg.norm(kps - t['kps'], axis=1).mean())
                 else:
                     motion = float(np.hypot(*(center - t['center'])))
-                alpha = float(np.clip(motion / (self.motion_frac * size),
-                                      self.alpha_min, 1.0))
+                # soft dead-zone. Inside the zone (motion <= dead) the smoothed
+                # landmarks freeze (alpha=0) -> still-head detector wobble is
+                # killed. Just outside, the alpha floor ramps 0 -> alpha_min across
+                # (dead, 2*dead] so slow real motion is picked up without a jump.
+                # deadzone_frac=0 -> dead=0 -> falls straight to the original
+                # clip(motion/(motion_frac*size), alpha_min, 1) formula.
+                dead = self.deadzone_frac * size
+                if dead > 0.0 and motion <= dead:
+                    alpha = 0.0
+                else:
+                    motion_eff = motion - dead if dead > 0.0 else motion
+                    raw = motion_eff / (self.motion_frac * size)
+                    if dead > 0.0:
+                        floor = self.alpha_min * min((motion - dead) / dead, 1.0)
+                    else:
+                        floor = self.alpha_min
+                    alpha = float(np.clip(raw, floor, 1.0))
                 beta = 1.0 - alpha
 
                 def smooth(cur, prev):
