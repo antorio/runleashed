@@ -41,6 +41,7 @@ def settings_tab():
                     video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", info='default: 18', step=1.0, interactive=True)
                 with gr.Accordion("Alignment & detection — live tuning", open=False):
                     accuracy_controls.append(gr.Checkbox(label="Use landmark alignment (68pt + RANSAC)", info="Main fix for extreme yaw/pitch. Off = detector raw kps.", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), elem_id='use_landmark_alignment', interactive=True))
+                    accuracy_controls.append(gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Replace buffalo_l 68pts with FaceFusion 2dfan4 for alignment + hull mask. Needs models/2dfan4.onnx. Off = buffalo_l.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), elem_id='use_hi_landmarker', interactive=True))
                     accuracy_controls.append(gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), elem_id='multi_angle_detection_mode', interactive=True))
                     accuracy_controls.append(gr.Checkbox(label="Color transfer (LAB) toward target", info="Match swap colour to target lighting", value=lambda a='use_color_transfer': getattr(roop.globals, a), elem_id='use_color_transfer', interactive=True))
             # ---------------- COLUMN 2: Expression Restorer ----------------

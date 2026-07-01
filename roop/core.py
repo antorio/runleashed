@@ -147,6 +147,9 @@ def pre_check() -> bool:
     # BiSeNet face-parsing model for the optional "Face Parser" masking engine.
     # Saved as ./models/bisenet_resnet_34.onnx (matches Mask_FaceParser lookup).
     util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/bisenet_resnet_34.onnx'])
+    # FaceFusion 2dfan4: high-accuracy 68-point landmarker (optional "Hi-accuracy
+    # 68pt landmarker" toggle). Saved as ./models/2dfan4.onnx (matches loader).
+    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/2dfan4.onnx'])
     # LivePortrait expression restorer models (optional feature).
     lp_dir = util.resolve_relative_path('../models/liveportrait')
     util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_feature_extractor.onnx'])

@@ -6,6 +6,7 @@ import psutil
 from roop.ProcessOptions import ProcessOptions
 
 from roop.face_util import get_first_face, get_all_faces, get_first_face_multi, get_all_faces_multi, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
+from roop.landmark68 import refine_faces_landmark68
 from roop.utilities import compute_cosine_distance, get_device, str_to_class, shuffle_array
 from roop.face_stabilizer import LandmarkStabilizer
 import roop.vr_util as vr
@@ -449,6 +450,7 @@ class ProcessMgr():
                     print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
                 return num_faces_found, frame
 
+            refine_faces_landmark68(frame, [face])
             if smoothing_on:
                 self.stabilizer.stabilize([face])
 
@@ -465,6 +467,7 @@ class ProcessMgr():
             if faces is None:
                 return num_faces_found, frame
 
+            refine_faces_landmark68(frame, faces)
             if smoothing_on:
                 self.stabilizer.stabilize(faces)
             if self.options.swap_mode == "all":

@@ -84,6 +84,14 @@ landmark_smoothing_strength = 0.7
 landmark_smoothing_deadzone = 0.006
 force_landmark_smoothing = False
 
+# High-accuracy 68-point landmarker (FaceFusion 2dfan4, ONNX, MIT). When ON and
+# the model file is present, its 68 landmarks replace buffalo_l's landmark_3d_68
+# (used for landmark alignment + occlusion hull mask). 5-point arcface kps and
+# landmark_2d_106 are unchanged. Put 2dfan4.onnx in ./models/ or set the path.
+use_hi_landmarker = False
+hi_landmarker_model_path = ''
+hi_landmarker_debug = False
+
 # Faceset (multi-image source) identity averaging. 'robust' (default) drops
 # outlier uploads by cosine distance from the group's median embedding, then
 # takes a detector-confidence-weighted mean -> identity that resembles the real
