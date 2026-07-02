@@ -126,11 +126,6 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
-        # temporal smoother for the LivePortrait expression vector (reset per run)
-        from roop.expression_smoother import ExpressionSmoother
-        self.exp_smoother = ExpressionSmoother(
-            strength=getattr(roop.globals, 'expression_smoothing_strength', 0.5)
-        )
 
         roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]
         if options.swap_mode == "all_female" or options.swap_mode == "all_male":
@@ -169,6 +164,19 @@ class ProcessMgr():
             else:
                 print(f"Not using {module}")
         self.processors = newprocessors
+
+        # Temporal smoother for the LivePortrait expression vector (reset per run).
+        # Created AFTER the processors so a smoother problem can never prevent the
+        # mask/other processors from being built. Non-fatal.
+        self.exp_smoother = None
+        try:
+            from roop.expression_smoother import ExpressionSmoother
+            self.exp_smoother = ExpressionSmoother(
+                strength=getattr(roop.globals, 'expression_smoothing_strength', 0.0)
+            )
+        except Exception as _e:
+            print(f"[expr-smoother] init skipped ({_e})")
+
 
 
 
@@ -700,7 +708,15 @@ class ProcessMgr():
                 if enhanced_frame is not None:
                     enhanced_frame = self.process_mask(p, aligned_img, enhanced_frame)
             elif p.type == 'expression':
-                fake_frame = self.process_expression(p, aligned_img, fake_frame, frame, target_face)
+                # Guard the ER exactly like the enhancer: a failure here must NOT
+                # abort the frame and skip the occlusion mask (which runs after).
+                # On failure we keep the un-restored swapped face and carry on so
+                # the mask still restores occluders (glass/hand/hair).
+                try:
+                    fake_frame = self.process_expression(p, aligned_img, fake_frame, frame, target_face)
+                except Exception as _e:
+                    if getattr(roop.globals, 'expression_debug', False):
+                        print(f"[expression] '{p.processorname}' failed on a frame ({_e}); using un-restored face")
             else:
                 # Enhancer pass. Guard against a failed/garbage result (e.g. a
                 # transient CUDA OOM on a conv -> NaN -> black crop) which would
@@ -1017,7 +1033,7 @@ class ProcessMgr():
                 'M': getattr(target_face, 'matrix', None),
                 'pose': getattr(target_face, 'pose', None),
                 'exp_smoother': (self.exp_smoother
-                                 if getattr(roop.globals, 'expression_smoothing', False)
+                                 if float(getattr(roop.globals, 'expression_smoothing_strength', 0.0) or 0.0) > 0.0
                                  and getattr(self, 'exp_smoother', None) is not None
                                  else None),
             }

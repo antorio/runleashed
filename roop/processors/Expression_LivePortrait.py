@@ -198,6 +198,9 @@ class Expression_LivePortrait():
             _sm = context.get('exp_smoother') if context is not None else None
             if _sm is not None:
                 try:
+                    # always re-read the live strength from globals so the slider
+                    # takes effect immediately (even mid-run).
+                    _sm.set_strength(float(getattr(roop.globals, 'expression_smoothing_strength', 0.0) or 0.0))
                     _lm = context.get('landmarks') if context is not None else None
                     if _lm is not None:
                         _p = np.asarray(_lm, dtype=np.float32)[:, :2]

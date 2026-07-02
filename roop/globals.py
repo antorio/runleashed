@@ -116,9 +116,8 @@ expression_clamp = 0.0
 expression_power = 2.0
 # Temporal smoothing of the LivePortrait expression vector (video wobble fix).
 # Absorbs per-frame noise in the ER expression while still following real
-# expression changes. strength 0 = passthrough. Off by default.
-expression_smoothing = False
-expression_smoothing_strength = 0.5
+# expression changes. Single control: strength (0 = off). Read live each frame.
+expression_smoothing_strength = 0.0
 # This generator inverts expression if fed the intuitive way; True applies the
 # corrected (verified) mapping so target expression transfers in the right
 # direction. Leave True. (Toggle only if a future model export flips again.)

@@ -93,6 +93,10 @@ def faceswap_tab():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
 
+                with gr.Accordion(label="Model & frames", open=False):
+                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
+                    forced_fps = gr.Number(value=0, label="Video FPS", precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
+
             # ----------------------------- CENTER : preview & actions -----------------------------
             with gr.Column(scale=5, min_width=480, elem_id="center_stage"):
                 previewimage = gr.Image(label="Preview", height=512, interactive=False, visible=True, format="jpeg")
@@ -118,14 +122,22 @@ def faceswap_tab():
 
             # ----------------------------- RIGHT : settings -----------------------------
             with gr.Column(scale=3, min_width=320):
-                with gr.Accordion(label="Model & frames", open=False):
-                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
-                    forced_fps = gr.Number(value=0, label="Video FPS", precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
-
                 with gr.Accordion(label="Face selection", open=True):
                     selected_face_detection = gr.Dropdown(swap_choices, value="First found", show_label=False)
                     num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps")
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
+
+                with gr.Accordion(label="Alignment & detection", open=False):
+                    fs_use_lmk_align = gr.Checkbox(label="Use landmark alignment (68pt + RANSAC)", info="Main fix for extreme yaw/pitch. Off = detector raw kps.", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
+                    fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model for swap alignment. Off = buffalo_l.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
+                    fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
+                    fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", info="Match swap colour to target lighting", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
+                    fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", info="Mask always runs after the ER. On = also after the enhancer, so occluders (hands/hair) stay un-enhanced.", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
+
+                with gr.Accordion(label="Stabilization", open=False):
+                    fs_lmk_smooth = gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother (default 0.7)', interactive=True)
+                    fs_lmk_deadzone = gr.Slider(0.0, 0.02, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Landmark dead-zone", info='freezes sub-threshold jitter while head is still (default ~0.006); raise for less wobble, 0=off', interactive=True)
 
                 with gr.Accordion(label="Expression", open=True):
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
@@ -134,6 +146,17 @@ def faceswap_tab():
                         cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
+
+                with gr.Accordion(label="Expression restorer — tuning", open=False):
+                    fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='temporally smooths the ER expression to kill wobble; real expressions still follow. 0 = off', interactive=True)
+                    fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
+                    fs_expr_border = gr.Slider(0.0, 0.5, value=lambda a='expression_blend_border': getattr(roop.globals, a), step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
+                    fs_pose_lock = gr.Checkbox(label="Pose lock (translation)", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
+                    fs_pose_lock_scale = gr.Checkbox(label="Pose lock — scale", value=lambda a='expression_pose_lock_scale': getattr(roop.globals, a), interactive=True)
+                    fs_pose_lock_rot = gr.Checkbox(label="Pose lock — rotation", value=lambda a='expression_pose_lock_rotation': getattr(roop.globals, a), interactive=True)
+                    fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
+                    fs_gate_soft = gr.Slider(10.0, 90.0, value=lambda a='expression_pose_gate_soft': getattr(roop.globals, a), step=1.0, label="Pose gate · start fade (°)", info='max(|pitch|,|yaw|) where restorer begins fading', interactive=True)
+                    fs_gate_hard = gr.Slider(10.0, 90.0, value=lambda a='expression_pose_gate_hard': getattr(roop.globals, a), step=1.0, label="Pose gate · full skip (°)", info='angle where restorer is skipped (clean swap)', interactive=True)
 
                 with gr.Accordion(label="Enhancement", open=True):
                     ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="256px", label="Subsample upscale to", interactive=True)
@@ -152,6 +175,34 @@ def faceswap_tab():
     # --------------------------------- event wiring (unchanged) ---------------------------------
     cb_expression.change(fn=on_expression_toggle, inputs=cb_expression, outputs=[])
     sl_expression.change(fn=on_expression_factor, inputs=sl_expression, outputs=[])
+
+    # live-global controls moved here from the Settings tab (no Apply needed):
+    # write straight to roop.globals so preview/run pick them up immediately.
+    _fs_toggles = [
+        (fs_use_lmk_align, 'use_landmark_alignment'),
+        (fs_use_hi_lmk, 'use_hi_landmarker'),
+        (fs_multi_angle, 'multi_angle_detection_mode'),
+        (fs_color_transfer, 'use_color_transfer'),
+        (fs_mask_after_enh, 'mask_after_enhancer'),
+        (fs_lmk_smooth, 'landmark_smoothing'),
+        (fs_pose_lock, 'expression_pose_lock'),
+        (fs_pose_lock_scale, 'expression_pose_lock_scale'),
+        (fs_pose_lock_rot, 'expression_pose_lock_rotation'),
+        (fs_pose_gate, 'expression_pose_gate'),
+    ]
+    for _c, _n in _fs_toggles:
+        _c.change(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_c], outputs=[])
+    _fs_sliders = [
+        (fs_lmk_smooth_str, 'landmark_smoothing_strength'),
+        (fs_lmk_deadzone, 'landmark_smoothing_deadzone'),
+        (fs_es, 'expression_smoothing_strength'),
+        (fs_expr_power, 'expression_power'),
+        (fs_expr_border, 'expression_blend_border'),
+        (fs_gate_soft, 'expression_pose_gate_soft'),
+        (fs_gate_hard, 'expression_pose_gate_hard'),
+    ]
+    for _s, _n in _fs_sliders:
+        _s.release(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_s], outputs=[])
     cb_expr_eyes.change(fn=on_expr_eyes, inputs=cb_expr_eyes, outputs=[])
     cb_expr_mouth.change(fn=on_expr_mouth, inputs=cb_expr_mouth, outputs=[])
     cb_expr_brows.change(fn=on_expr_brows, inputs=cb_expr_brows, outputs=[])

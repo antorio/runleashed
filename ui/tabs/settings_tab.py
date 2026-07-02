@@ -39,44 +39,19 @@ def settings_tab():
                     settings_controls.append(gr.Dropdown(video_codecs, label="Video Codec", info='default: libx264', value=roop.globals.CFG.output_video_codec, elem_id='output_video_codec', interactive=True))
                     settings_controls.append(gr.Dropdown(video_formats, label="Video Output Format", info='default: mp4', value=roop.globals.CFG.output_video_format, elem_id='output_video_format', interactive=True))
                     video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", info='default: 18', step=1.0, interactive=True)
-                with gr.Accordion("Alignment & detection — live tuning", open=False):
-                    accuracy_controls.append(gr.Checkbox(label="Use landmark alignment (68pt + RANSAC)", info="Main fix for extreme yaw/pitch. Off = detector raw kps.", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), elem_id='use_landmark_alignment', interactive=True))
-                    accuracy_controls.append(gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model for swap alignment. Off = buffalo_l.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), elem_id='use_hi_landmarker', interactive=True))
-                    accuracy_controls.append(gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), elem_id='multi_angle_detection_mode', interactive=True))
-                    accuracy_controls.append(gr.Checkbox(label="Color transfer (LAB) toward target", info="Match swap colour to target lighting", value=lambda a='use_color_transfer': getattr(roop.globals, a), elem_id='use_color_transfer', interactive=True))
             # ---------------- COLUMN 2: Expression Restorer ----------------
             with gr.Column():
-                with gr.Accordion("Expression Restorer — live tuning (no restart needed)", open=True):
+                with gr.Accordion("Expression Restorer — experimental / debug", open=False):
                     expr_global_controls = []
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock (translation)", value=lambda a='expression_pose_lock': getattr(roop.globals, a), elem_id='expression_pose_lock', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock — scale", value=lambda a='expression_pose_lock_scale': getattr(roop.globals, a), elem_id='expression_pose_lock_scale', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Pose lock — rotation", value=lambda a='expression_pose_lock_rotation': getattr(roop.globals, a), elem_id='expression_pose_lock_rotation', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Expression smoothing (video wobble)", info="Temporally smooths the ER expression to kill wobble; real expressions still follow. Off = per-frame (current).", value=lambda a='expression_smoothing': getattr(roop.globals, a), elem_id='expression_smoothing', interactive=True))
-                    _es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing strength", info='higher = calmer (more wobble killed); 0 = off', interactive=True)
-                    accuracy_sliders.append((_es, 'expression_smoothing_strength'))
                     expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=lambda a='expression_full_pipeline': getattr(roop.globals, a), elem_id='expression_full_pipeline', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=lambda a='expression_stitching': getattr(roop.globals, a), elem_id='expression_stitching', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Serialize (stable at high threads)", value=lambda a='expression_serialize': getattr(roop.globals, a), elem_id='expression_serialize', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Debug log [expr-delta] (A/B in console)", value=lambda a='expression_debug': getattr(roop.globals, a), elem_id='expression_debug', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Profile timings (per-stage ms in console)", info="Prints [timing] per processor each frame -- use briefly to see which stage is slow, then turn off.", value=lambda a='profile_timings': getattr(roop.globals, a), elem_id='profile_timings', interactive=True))
-                    expr_global_controls.append(gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), elem_id='expression_pose_gate', interactive=True))
-                    expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='amplify expression (default 2.0)', interactive=True)
-                    expr_border = gr.Slider(0.0, 0.5, value=lambda a='expression_blend_border': getattr(roop.globals, a), step=0.02, label="Blend border", info='edge feather (default 0.2)', interactive=True)
-                    expr_gate_soft = gr.Slider(10.0, 90.0, value=lambda a='expression_pose_gate_soft': getattr(roop.globals, a), step=1.0, label="Pose gate · start fade (°)", info='max(|pitch|,|yaw|) where restorer begins fading', interactive=True)
-                    expr_gate_hard = gr.Slider(10.0, 90.0, value=lambda a='expression_pose_gate_hard': getattr(roop.globals, a), step=1.0, label="Pose gate · full skip (°)", info='angle where restorer is skipped (clean swap)', interactive=True)
                     expr_cal_scale = gr.Slider(0.80, 1.20, value=lambda a='expression_lp_cal_scale': getattr(roop.globals, a), step=0.005, label="Full pipeline · cal scale", info='paste-back size correction (1.0 = none)', interactive=True)
                     expr_cal_dx = gr.Slider(-0.15, 0.15, value=lambda a='expression_lp_cal_dx': getattr(roop.globals, a), step=0.005, label="Full pipeline · cal shift X", info='horizontal nudge (fraction of crop)', interactive=True)
                     expr_cal_dy = gr.Slider(-0.15, 0.15, value=lambda a='expression_lp_cal_dy': getattr(roop.globals, a), step=0.005, label="Full pipeline · cal shift Y", info='vertical nudge (fraction of crop)', interactive=True)
                     expr_cal_rot = gr.Slider(-10.0, 10.0, value=lambda a='expression_lp_cal_rot': getattr(roop.globals, a), step=0.5, label="Full pipeline · cal rotation (°)", info='paste-back rotation correction', interactive=True)
-                with gr.Accordion("Face mask & paste-back — live tuning", open=False):
-                    accuracy_controls.append(gr.Checkbox(label="Convex-hull face matte", info="Follows face contour (less jaw/neck/bg bleed). Off = rectangle.", value=lambda a='use_face_hull_mask': getattr(roop.globals, a), elem_id='use_face_hull_mask', interactive=True))
-                    accuracy_controls.append(gr.Checkbox(label="Occlusion mask after enhancer", info="Mask always runs after the ER. On = also after the enhancer, so occluders (hands/hair) stay un-enhanced.", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), elem_id='mask_after_enhancer', interactive=True))
-                    _hf = gr.Slider(0.0, 1.5, value=lambda a='face_hull_forehead': getattr(roop.globals, a), step=0.05, label="Hull forehead extend", info='cover forehead (default 0.6)', interactive=True)
-                    _hd = gr.Slider(0.0, 0.5, value=lambda a='face_hull_dilate': getattr(roop.globals, a), step=0.01, label="Hull dilate", info='grow matte outward (default 0.10)', interactive=True)
-                    _hm = gr.Slider(0.0, 0.5, value=lambda a='face_hull_min_area': getattr(roop.globals, a), step=0.01, label="Hull min area (degeneracy guard)", info='fallback to ellipse below this at extreme angles (default 0.22)', interactive=True)
-                    accuracy_sliders.append((_hf, 'face_hull_forehead'))
-                    accuracy_sliders.append((_hd, 'face_hull_dilate'))
-                    accuracy_sliders.append((_hm, 'face_hull_min_area'))
             # ---------------- COLUMN 3: Interface & maintenance ----------------
             with gr.Column():
                 with gr.Accordion("Interface & maintenance", open=True):
@@ -91,22 +66,13 @@ def settings_tab():
                         button_apply_settings = gr.Button("Apply Settings", variant='primary')
                         button_apply_restart = gr.Button("Restart Server")
                     button_clean_temp = gr.Button("Clean temp folder")
-                with gr.Accordion("Stabilization & faceset — live tuning", open=False):
-                    accuracy_controls.append(gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), elem_id='landmark_smoothing', interactive=True))
-                    _ls = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother (default 0.7)', interactive=True)
-                    accuracy_sliders.append((_ls, 'landmark_smoothing_strength'))
-                    _ldz = gr.Slider(0.0, 0.02, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Landmark dead-zone", info='freezes sub-threshold jitter while head is still; ~0.006≈2.4px on a 400px face (default); raise for less wobble, 0=off', interactive=True)
-                    accuracy_sliders.append((_ldz, 'landmark_smoothing_deadzone'))
+                with gr.Accordion("Faceset", open=False):
                     accuracy_controls.append(gr.Dropdown(["robust", "median", "mean"], label="Faceset average mode", info="how multi-image source identity is blended", value=lambda a='faceset_average_mode': getattr(roop.globals, a), elem_id='faceset_average_mode', interactive=True))
                     _ot = gr.Slider(0.0, 1.0, value=lambda a='faceset_outlier_threshold': getattr(roop.globals, a), step=0.05, label="Faceset outlier threshold", info='lower = stricter outlier drop (default 0.6)', interactive=True)
                     accuracy_sliders.append((_ot, 'faceset_outlier_threshold'))
 
     for c in expr_global_controls:
         c.select(fn=on_option_changed)
-    expr_power.release(fn=lambda v, n='expression_power': on_global_value_changed(v, n), inputs=[expr_power])
-    expr_border.release(fn=lambda v, n='expression_blend_border': on_global_value_changed(v, n), inputs=[expr_border])
-    expr_gate_soft.release(fn=lambda v, n='expression_pose_gate_soft': on_global_value_changed(v, n), inputs=[expr_gate_soft])
-    expr_gate_hard.release(fn=lambda v, n='expression_pose_gate_hard': on_global_value_changed(v, n), inputs=[expr_gate_hard])
     expr_cal_scale.release(fn=lambda v, n='expression_lp_cal_scale': on_global_value_changed(v, n), inputs=[expr_cal_scale])
     expr_cal_dx.release(fn=lambda v, n='expression_lp_cal_dx': on_global_value_changed(v, n), inputs=[expr_cal_dx])
     expr_cal_dy.release(fn=lambda v, n='expression_lp_cal_dy': on_global_value_changed(v, n), inputs=[expr_cal_dy])
