@@ -28,20 +28,20 @@ def settings_tab():
             with gr.Column():
                 with gr.Accordion("Performance", open=True):
                     settings_controls.append(gr.Dropdown(providerlist, label="Provider", value=roop.globals.CFG.provider, elem_id='provider', interactive=True))
-                    max_threads = gr.Slider(1, 32, value=roop.globals.CFG.max_threads, label="Max. Number of Threads", info='default: 8', step=1.0, interactive=True)
+                    max_threads = gr.Slider(1, 32, value=roop.globals.CFG.max_threads, label="Max. Number of Threads", step=1.0, interactive=True)
                     memory_limit = gr.Slider(0, 128, value=roop.globals.CFG.memory_limit, label="Max. Memory to use (Gb)", info='0 meaning no limit', step=1.0, interactive=True)
                     settings_controls.append(gr.Checkbox(label="Force CPU for Face Analyser", value=roop.globals.CFG.force_cpu, elem_id='force_cpu', interactive=True))
                     chk_det_size = gr.Checkbox(label="Use default Det-Size", value=True, elem_id='default_det_size', interactive=True)
                 with gr.Accordion("Output", open=True):
                     output_template = gr.Textbox(label="Filename Output Template", info="(file extension is added automatically)", lines=1, placeholder='{file}_{time}', value=roop.globals.CFG.output_template)
                     output_folder_box = gr.Textbox(label="Output Folder", info="Where results are saved", lines=1, placeholder='/content/drive/MyDrive/c', value=getattr(roop.globals.CFG, 'output_folder', '/content/drive/MyDrive/c'))
-                    settings_controls.append(gr.Dropdown(image_formats, label="Image Output Format", info='default: png', value=roop.globals.CFG.output_image_format, elem_id='output_image_format', interactive=True))
-                    settings_controls.append(gr.Dropdown(video_codecs, label="Video Codec", info='default: libx264', value=roop.globals.CFG.output_video_codec, elem_id='output_video_codec', interactive=True))
-                    settings_controls.append(gr.Dropdown(video_formats, label="Video Output Format", info='default: mp4', value=roop.globals.CFG.output_video_format, elem_id='output_video_format', interactive=True))
-                    video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", info='default: 18', step=1.0, interactive=True)
+                    settings_controls.append(gr.Dropdown(image_formats, label="Image Output Format", value=roop.globals.CFG.output_image_format, elem_id='output_image_format', interactive=True))
+                    settings_controls.append(gr.Dropdown(video_codecs, label="Video Codec", value=roop.globals.CFG.output_video_codec, elem_id='output_video_codec', interactive=True))
+                    settings_controls.append(gr.Dropdown(video_formats, label="Video Output Format", value=roop.globals.CFG.output_video_format, elem_id='output_video_format', interactive=True))
+                    video_quality = gr.Slider(0, 100, value=roop.globals.CFG.video_quality, label="Video Quality (crf)", step=1.0, interactive=True)
             # ---------------- COLUMN 2: Expression Restorer ----------------
             with gr.Column():
-                with gr.Accordion("Expression Restorer — experimental / debug", open=False):
+                with gr.Accordion("Expression Restorer — experimental / debug", open=True):
                     expr_global_controls = []
                     expr_global_controls.append(gr.Checkbox(label="Full LivePortrait pipeline (experimental)", value=lambda a='expression_full_pipeline': getattr(roop.globals, a), elem_id='expression_full_pipeline', interactive=True))
                     expr_global_controls.append(gr.Checkbox(label="Stitching model (experimental)", value=lambda a='expression_stitching': getattr(roop.globals, a), elem_id='expression_stitching', interactive=True))
@@ -52,6 +52,10 @@ def settings_tab():
                     expr_cal_dx = gr.Slider(-0.15, 0.15, value=lambda a='expression_lp_cal_dx': getattr(roop.globals, a), step=0.005, label="Full pipeline · cal shift X", info='horizontal nudge (fraction of crop)', interactive=True)
                     expr_cal_dy = gr.Slider(-0.15, 0.15, value=lambda a='expression_lp_cal_dy': getattr(roop.globals, a), step=0.005, label="Full pipeline · cal shift Y", info='vertical nudge (fraction of crop)', interactive=True)
                     expr_cal_rot = gr.Slider(-10.0, 10.0, value=lambda a='expression_lp_cal_rot': getattr(roop.globals, a), step=0.5, label="Full pipeline · cal rotation (°)", info='paste-back rotation correction', interactive=True)
+                with gr.Accordion("Faceset", open=True):
+                    accuracy_controls.append(gr.Dropdown(["robust", "median", "mean"], label="Faceset average mode", info="how multi-image source identity is blended", value=lambda a='faceset_average_mode': getattr(roop.globals, a), elem_id='faceset_average_mode', interactive=True))
+                    _ot = gr.Slider(0.0, 1.0, value=lambda a='faceset_outlier_threshold': getattr(roop.globals, a), step=0.05, label="Faceset outlier threshold", info='lower = stricter outlier drop', interactive=True)
+                    accuracy_sliders.append((_ot, 'faceset_outlier_threshold'))
             # ---------------- COLUMN 3: Interface & maintenance ----------------
             with gr.Column():
                 with gr.Accordion("Interface & maintenance", open=True):
@@ -66,10 +70,6 @@ def settings_tab():
                         button_apply_settings = gr.Button("Apply Settings", variant='primary')
                         button_apply_restart = gr.Button("Restart Server")
                     button_clean_temp = gr.Button("Clean temp folder")
-                with gr.Accordion("Faceset", open=False):
-                    accuracy_controls.append(gr.Dropdown(["robust", "median", "mean"], label="Faceset average mode", info="how multi-image source identity is blended", value=lambda a='faceset_average_mode': getattr(roop.globals, a), elem_id='faceset_average_mode', interactive=True))
-                    _ot = gr.Slider(0.0, 1.0, value=lambda a='faceset_outlier_threshold': getattr(roop.globals, a), step=0.05, label="Faceset outlier threshold", info='lower = stricter outlier drop (default 0.6)', interactive=True)
-                    accuracy_sliders.append((_ot, 'faceset_outlier_threshold'))
 
     for c in expr_global_controls:
         c.select(fn=on_option_changed)
