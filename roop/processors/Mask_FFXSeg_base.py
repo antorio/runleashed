@@ -47,7 +47,7 @@ class FFXSegBase:
                 self.sessions.append((sess, sess.get_inputs(), sess.get_outputs()))
 
     def Run(self, img1, keywords: str) -> Frame:
-        temp_frame = cv2.resize(img1, (256, 256), cv2.INTER_CUBIC)
+        temp_frame = cv2.resize(img1, (256, 256), interpolation=cv2.INTER_CUBIC)
         temp_frame = temp_frame.astype('float32') / 255.0
         temp_frame = temp_frame[None, ...]
 

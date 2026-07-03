@@ -84,6 +84,16 @@ landmark_smoothing_strength = 0.7
 landmark_smoothing_deadzone = 0.006
 force_landmark_smoothing = False
 
+# Landmark sanity gate: before using the 68->5 derived points for alignment,
+# check that they agree with the detector's own 5 keypoints (both are free).
+# On hard frames (extreme pose / blur / stretched face) the 68pt model fails
+# FIRST, producing a wrong affine -> the "misplaced landmark" distortion. When
+# the mean disagreement exceeds `threshold` (fraction of the face size) the
+# alignment falls back to the detector kps for that frame. Prints [lmk-gate]
+# on every fallback when expression_debug is on.
+landmark_sanity_gate = True
+landmark_sanity_threshold = 0.08
+
 # High-accuracy 68-point landmarker (FaceFusion 2dfan4, ONNX, MIT). When ON and
 # the model file is present, its 68 landmarks replace buffalo_l's landmark_3d_68
 # (used for landmark alignment + occlusion hull mask). 5-point arcface kps and

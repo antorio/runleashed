@@ -27,7 +27,10 @@ class eNoFaceAction():
     USE_ORIGINAL_FRAME = 0
     RETRY_ROTATED = 1
     SKIP_FRAME = 2
-    SKIP_FRAME_IF_DISSIMILAR = 3,
+    # NOTE: this used to be `3,` (a stray comma made it the TUPLE (3,)), so the
+    # int comparisons `no_face_action == SKIP_FRAME_IF_DISSIMILAR` were always
+    # False and the mode silently behaved like Retry-rotated. Fixed to int.
+    SKIP_FRAME_IF_DISSIMILAR = 3
     USE_LAST_SWAPPED = 4
 
 
@@ -219,6 +222,9 @@ class ProcessMgr():
 
 
     def process_frames(self, source_files: List[str], target_files: List[str], current_files, update: Callable[[], None]) -> None:
+        # source->target lookup built once: the old per-frame source_files.index(f)
+        # was O(n) per frame (O(n^2) for long extract-frames batches).
+        target_map = dict(zip(source_files, target_files))
         for f in current_files:
             if not roop.globals.processing:
                 return
@@ -227,15 +233,18 @@ class ProcessMgr():
             temp_frame = cv2.imdecode(np.fromfile(f, dtype=np.uint8), cv2.IMREAD_COLOR)
             if temp_frame is not None:
                 if self.options.frame_processing:
+                    # chain the processors (frame = p.Run(frame)); the old code
+                    # fed temp_frame to every processor so only the LAST one's
+                    # effect survived (process_videoframes already chained).
+                    frame = temp_frame
                     for p in self.processors:
-                        frame = p.Run(temp_frame)
+                        frame = p.Run(frame)
                     resimg = frame
                 else:
                     resimg = self.process_frame(temp_frame)
                 if resimg is not None:
-                    i = source_files.index(f)
                     # Also let numpy write the file to support utf-8/16 filenames
-                    cv2.imencode(f'.{roop.globals.CFG.output_image_format}',resimg)[1].tofile(target_files[i])
+                    cv2.imencode(f'.{roop.globals.CFG.output_image_format}',resimg)[1].tofile(target_map[f])
             if update:
                 update()
 
@@ -630,6 +639,13 @@ class ProcessMgr():
                 if rotface is None:
                     rotation_action = None
                 else:
+                    # Run the same landmark refinement as the normal path (the
+                    # rotated retry used to skip it, so exactly the hardest
+                    # frames -- horizontal faces -- were aligned with the rawest
+                    # landmarks). The temporal stabilizer is deliberately NOT
+                    # applied here: rotcutframe coordinates live in a different
+                    # space than the full frame, so its tracks would mismatch.
+                    refine_faces_landmark68(rotcutframe, [rotface])
                     saved_frame = frame.copy()
                     frame = rotcutframe
                     target_face = rotface
@@ -674,6 +690,35 @@ class ProcessMgr():
         if roop.globals.use_landmark_alignment and landmarks68 is not None:
             try:
                 lmk5 = landmark_68_to_5(landmarks68)
+                # Landmark sanity gate: on hard frames (extreme pose / blur /
+                # stretched face) the 68pt model fails BEFORE the detector's own
+                # 5 kps do, and a bad 68->5 set produces a wrong affine (the
+                # "misplaced landmark" distortion). Both point sets should mark
+                # the same eyes/nose/mouth, so a large mean disagreement
+                # (relative to face size) = the 68pt landmarks are broken for
+                # this frame -> fall back to the detector kps.
+                if getattr(roop.globals, 'landmark_sanity_gate', True):
+                    kps = getattr(target_face, 'kps', None)
+                    if kps is not None:
+                        kps5 = np.asarray(kps, dtype=np.float32).reshape(-1, 2)[:5]
+                        if kps5.shape == lmk5.shape:
+                            bb = np.asarray(target_face.bbox, dtype=np.float32)
+                            fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
+                            d = np.linalg.norm(lmk5 - kps5, axis=1) / fsize
+                            d_mean = float(d.mean())
+                            d_max = float(d.max())
+                            thr = float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08))
+                            # Two criteria: the mean catches a globally-drifted
+                            # landmark set; the per-point max (2x thr) catches
+                            # the more common failure where ONE keypoint goes
+                            # wild -- the mean over 5 points would dilute that,
+                            # yet a single wild point is enough to skew the fit.
+                            if d_mean > thr or d_max > 2.0 * thr:
+                                if getattr(roop.globals, 'expression_debug', False):
+                                    print(f"[lmk-gate] 68pt/kps disagree mean={d_mean:.3f} "
+                                          f"max={d_max:.3f} (thr {thr:.3f}/{2*thr:.3f}, face {fsize:.0f}px) "
+                                          f"-> detector-kps alignment for this frame")
+                                raise ValueError('landmark sanity gate tripped')
                 aligned_img, M = align_crop_robust(frame, lmk5, subsample_size)
             except Exception:
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
@@ -700,13 +745,17 @@ class ProcessMgr():
                 fake_frame = fake_frame.astype(np.uint8)
                 scale_factor = 0.0
             elif p.type == 'mask':
-                fake_frame = self.process_mask(p, aligned_img, fake_frame)
+                # Run the mask model ONCE and re-apply the same raw mask to both
+                # frames (the old code ran a full ONNX inference twice on the
+                # identical aligned crop when the enhanced face also needed it).
+                raw_mask = self.compute_mask(p, aligned_img)
+                fake_frame = self.apply_mask(raw_mask, aligned_img, fake_frame)
                 # When the mask runs after the enhancer, the enhanced face already
                 # exists and is the dominant source in paste_upscale's blend, so
                 # the occluder must be restored onto it too -- otherwise it would
                 # be diluted/lost. (Before the enhancer, enhanced_frame is None.)
                 if enhanced_frame is not None:
-                    enhanced_frame = self.process_mask(p, aligned_img, enhanced_frame)
+                    enhanced_frame = self.apply_mask(raw_mask, aligned_img, enhanced_frame)
             elif p.type == 'expression':
                 # Guard the ER exactly like the enhancer: a failure here must NOT
                 # abort the frame and skip the occlusion mask (which runs after).
@@ -738,7 +787,7 @@ class ProcessMgr():
         upscale = 512
         orig_width = fake_frame.shape[1]
         if orig_width != upscale:
-            fake_frame = cv2.resize(fake_frame, (upscale, upscale), cv2.INTER_CUBIC)
+            fake_frame = cv2.resize(fake_frame, (upscale, upscale), interpolation=cv2.INTER_CUBIC)
         mask_offsets = (0,0,0,0,1,20) if inputface is None else inputface.mask_offsets
 
         
@@ -935,30 +984,20 @@ class ProcessMgr():
             return cv2.cvtColor(src_lab, cv2.COLOR_LAB2BGR)
         except Exception:
             return src
-        if self.options.show_face_area_overlay:
-            # Additional steps for green overlay
-            green_overlay = np.zeros_like(target_img)
-            green_color = [0, 255, 0]  # RGB for green
-            for i in range(3):  # Apply green color where img_matte is not zero
-                green_overlay[:, :, i] = np.where(img_matte > 0, green_color[i], 0)        ##Transform upcaled face back to target_img
-        img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1]) 
-        paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-        if upsk_face is not fake_face:
-            fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-            paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
-
-        # Re-assemble image
-        paste_face = img_matte * paste_face
-        paste_face = paste_face + (1-img_matte) * target_img.astype(np.float32)
-        if self.options.show_face_area_overlay:
-            # Overlay the green overlay on the final image
-            paste_face = cv2.addWeighted(paste_face.astype(np.uint8), 1 - 0.5, green_overlay, 0.5, 0)
-        return paste_face.astype(np.uint8)
+        # (an unreachable duplicated copy of paste_upscale's tail used to live
+        # here after the return -- removed.)
 
 
     def blur_area(self, img_matte, num_erosion_iterations, blur_amount):
         # Detect the affine transformed white area
-        mask_h_inds, mask_w_inds = np.where(img_matte==255) 
+        mask_h_inds, mask_w_inds = np.where(img_matte==255)
+        if mask_h_inds.size == 0:
+            # No pixel is exactly 255 (e.g. an anti-aliased user image mask):
+            # fall back to the non-zero area; if the matte is fully empty just
+            # return it (nothing to feather) instead of crashing on np.max([]).
+            mask_h_inds, mask_w_inds = np.where(img_matte > 0)
+            if mask_h_inds.size == 0:
+                return img_matte
         # Calculate the size (and diagonal size) of transformed white area width and height boundaries
         mask_h = np.max(mask_h_inds) - np.min(mask_h_inds) 
         mask_w = np.max(mask_w_inds) - np.min(mask_w_inds)
@@ -1046,9 +1085,14 @@ class ProcessMgr():
         )
         return restored
 
-    def process_mask(self, processor, frame:Frame, target:Frame):
-        img_mask = processor.Run(frame, self.options.masking_text)
-        img_mask = cv2.resize(img_mask, (target.shape[1], target.shape[0]))
+    def compute_mask(self, processor, frame:Frame):
+        """One mask-model inference on the aligned crop; returns the raw mask
+        (model resolution). Split out so the result can be applied to several
+        targets (swapped + enhanced) without re-running the model."""
+        return processor.Run(frame, self.options.masking_text)
+
+    def apply_mask(self, raw_mask, frame:Frame, target:Frame):
+        img_mask = cv2.resize(raw_mask, (target.shape[1], target.shape[0]))
         img_mask = np.reshape(img_mask, [img_mask.shape[0],img_mask.shape[1],1])
 
         # The restore-source (frame = original aligned crop) must match the target
@@ -1067,6 +1111,10 @@ class ProcessMgr():
         result = (1-img_mask) * target
         result += img_mask * frame.astype(np.float32)
         return np.uint8(result)
+
+    def process_mask(self, processor, frame:Frame, target:Frame):
+        # kept for compatibility with any external callers
+        return self.apply_mask(self.compute_mask(processor, frame), frame, target)
 
 
     # Code for mouth restoration adapted from https://github.com/iVideoGameBoss/iRoopDeepFaceCam
