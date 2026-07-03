@@ -216,6 +216,28 @@ class MatrixStabilizer:
         with self._lock:
             self.tracks = []
 
+    def __init__(self, strength: float = 0.7, match_frac: float = 0.6,
+                 max_age: int = 8, freq: float = 30.0, deadband_px: float = 1.2):
+        # strength -> min_cutoff on a log scale: 0 -> 4 Hz (barely smooths),
+        # 0.7 -> ~0.4 Hz, 1 -> 0.16 Hz (calm). beta keeps real motion followed:
+        # the cutoff rises with the (smoothed) parameter velocity, so pans and
+        # head turns immediately reopen the filter.
+        s = float(np.clip(strength, 0.0, 1.0))
+        self.min_cutoff = float(4.0 * (0.04 ** s))
+        self.beta = 10.0   # high beta = filter fully reopens on fast motion (no trail)
+        self.match_frac = float(match_frac)
+        self.max_age = int(max_age)
+        self.freq = float(freq)
+        # Deadband: if smoothing moves the crop corners by less than this many
+        # pixels, DON'T touch M at all. Without it One-Euro re-warps every frame
+        # by a sub-pixel amount even when the alignment is already steady, and
+        # that constant sub-pixel resampling reads as a permanent micro-jitter
+        # around the face. The deadband makes the stabilizer act only when there
+        # is real flicker to remove and stay perfectly still otherwise.
+        self.deadband_px = float(deadband_px)
+        self.tracks = []
+        self._lock = Lock()
+
     def _new_filters(self):
         return [_OneEuro(self.min_cutoff, self.beta, freq=self.freq) for _ in range(4)]
 
@@ -227,12 +249,34 @@ class MatrixStabilizer:
                 best_d, best = d, t
         return best
 
+    @staticmethod
+    def _corner_shift(M_a, M_b, crop_size):
+        """Max displacement (px, in FRAME space) of the crop's four corners
+        between two 2x3 forward (frame->crop) similarity matrices. This is the
+        correct 'how much did the warp actually move' metric -- comparing raw
+        matrix elements mixes radians, log-scale and pixels."""
+        cs = float(crop_size)
+        corners = np.array([[0, 0], [cs, 0], [0, cs], [cs, cs]], dtype=np.float64)
+        # invert each 2x3 (frame->crop) to map crop corners back into the frame
+        def inv_map(M, pts):
+            A = M[:, :2]; b = M[:, 2]
+            Ai = np.linalg.inv(A)
+            return (pts - b) @ Ai.T
+        try:
+            pa = inv_map(M_a, corners)
+            pb = inv_map(M_b, corners)
+        except np.linalg.LinAlgError:
+            return 1e9
+        return float(np.linalg.norm(pa - pb, axis=1).max())
+
     def smooth(self, M, bbox, crop_size):
-        """M: 2x3 similarity (frame->crop). Returns the smoothed 2x3 matrix."""
+        """M: 2x3 similarity (frame->crop). Returns (M_out, changed).
+        changed=False means the deadband held and M_out IS M (caller should keep
+        the original crop, skipping the re-warp entirely)."""
         M = np.asarray(M, dtype=np.float64)
         s = float(np.hypot(M[0, 0], M[1, 0]))
         if not np.isfinite(s) or s <= 1e-9:
-            return M.astype(np.float64)
+            return M.astype(np.float64), False
         theta = float(np.arctan2(M[1, 0], M[0, 0]))
         cs = float(max(crop_size, 1))
         params = [theta, float(np.log(s)), float(M[0, 2]) / cs, float(M[1, 2]) / cs]
@@ -266,5 +310,11 @@ class MatrixStabilizer:
         th, ls, tx, ty = out
         s2 = float(np.exp(ls))
         c, sn = np.cos(th) * s2, np.sin(th) * s2
-        return np.array([[c, -sn, tx * cs],
-                         [sn,  c, ty * cs]], dtype=np.float64)
+        M_s = np.array([[c, -sn, tx * cs],
+                        [sn,  c, ty * cs]], dtype=np.float64)
+
+        # Deadband: if the smoothed warp barely differs from the raw one, keep
+        # the raw M so no re-warp happens and there is zero added resampling.
+        if self._corner_shift(M, M_s, cs) < self.deadband_px:
+            return M, False
+        return M_s, True

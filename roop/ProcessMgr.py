@@ -329,8 +329,15 @@ class ProcessMgr():
             self.m_stabilizer.reset()
 
         cap = cv2.VideoCapture(source_video)
-        # frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_count = (frame_end - frame_start) + 1
+        # endframe is a COUNT (get_video_frame_total), so the range processed is
+        # [frame_start, frame_end) == frame_end - frame_start frames -- exactly
+        # what read_frames_thread reads. The old "+1" made the progress target
+        # one larger than the frames ever produced, so the bar stuck at N/(N+1),
+        # the Gradio generator never reached 100%, the UI stayed "processing"
+        # after the video finished, and Stop then returned a non-JSON response
+        # (the "JSON.parse ... unexpected character" error). Matching the counts
+        # lets the run reach 100% and the button flip back to idle on its own.
+        frame_count = (frame_end - frame_start)
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -736,17 +743,20 @@ class ProcessMgr():
         # One-Euro smoothing of the alignment matrix (video only; rides the
         # landmark-smoothing toggle). estimate_norm turns residual landmark
         # noise into warp rotation/scale/position flicker; smoothing M's
-        # similarity parameters removes that shimmer at the source. Skipped on
-        # the rotated-retry path (rotcutframe lives in a different coordinate
-        # space, its track would mismatch) and for image batches.
+        # similarity parameters removes that shimmer at the source. A pixel
+        # deadband inside the stabilizer means that when the alignment is
+        # already steady it returns the RAW M (changed=False) and we skip the
+        # re-warp entirely -- so a clean track gets zero added resampling and no
+        # micro-jitter. Skipped on the rotated-retry path (different coordinate
+        # space) and for image batches.
         if (rotation_action is None
                 and roop.globals.landmark_smoothing
                 and (self.video_mode or roop.globals.force_landmark_smoothing)
                 and getattr(self, 'm_stabilizer', None) is not None):
-            M_s = self.m_stabilizer.smooth(M, target_face.bbox, subsample_size)
-            if not np.allclose(M_s, M):
+            M_s, changed = self.m_stabilizer.smooth(M, target_face.bbox, subsample_size)
+            if changed:
                 aligned_img = cv2.warpAffine(frame, M_s, (subsample_size, subsample_size), borderValue=0.0)
-            M = M_s
+                M = M_s
 
         fake_frame = aligned_img
         target_face.matrix = M

@@ -127,7 +127,7 @@ def faceswap_tab():
                     num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps")
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
-                with gr.Accordion(label="Alignment & detection", open=False):
+                with gr.Accordion(label="Alignment & stabilization", open=False):
                     # NOTE (menu diet): "Use landmark alignment" was removed from the
                     # UI -- it's the settled main fix and stays ON (roop.globals.
                     # use_landmark_alignment). The sanity-gate checkbox was folded
@@ -139,26 +139,19 @@ def faceswap_tab():
                     fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
                     fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
-
-                with gr.Accordion(label="Stabilization", open=False):
-                    fs_lmk_smooth = gr.Checkbox(label="Landmark + warp smoothing (video)", info="Smooths landmarks AND the alignment matrix (One-Euro) to remove per-frame jitter/shimmer", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_smooth = gr.Checkbox(label="Landmark + warp smoothing (video)", info="Smooths landmarks AND the alignment matrix (One-Euro, with a pixel deadband so a steady face is left untouched) to remove per-frame jitter/shimmer", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
                     fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother', interactive=True)
 
-                with gr.Accordion(label="Expression", open=True):
+                with gr.Accordion(label="Expression Restorer", open=True):
+                    # ER controls + tuning merged into one group (was "Expression"
+                    # + "Expression restorer — tuning"). Settled tunables (blend
+                    # border 0.2, pose-gate soft/hard 45/65 deg) stay in globals.
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
                     sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
                     with gr.Row(elem_id="expr_checks"):
                         cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
-
-                with gr.Accordion(label="Expression restorer — tuning", open=False):
-                    # NOTE (menu diet): blend border (0.2) and pose-gate soft/hard
-                    # (45/65 deg) are settled -> removed from the UI, still tunable
-                    # in roop/globals.py. The 3 pose-lock checkboxes became ONE
-                    # adaptive lock: genuine expression within the tolerance passes,
-                    # only the excess is clamped (tolerances in globals, tunable
-                    # via the sdev/kabsch values printed by [expr-delta]).
                     fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='temporal smoothing the ER; 0 = off', interactive=True)
                     fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='amplify expression', interactive=True)
                     fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", info="Locks the global drift of the expression delta but lets genuine global expression (jaw drop, small head bob) through within a tolerance", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
