@@ -241,6 +241,14 @@ def faceswap_tab():
         inputs=[ui.globals.ui_selected_swap_model, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
                     roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
+    # Reset the buttons in a SEPARATE .then() event instead of relying on the
+    # generator's final yield reaching the client. With a manual progress
+    # callback active, Gradio 5.9.1 can tear down the generator's event stream
+    # once progress hits 100% BEFORE delivering that last yield -- so the render
+    # finishes and the video is saved, yet Start/Stop never flip back and the UI
+    # looks stuck. `.then()` is guaranteed to run after the generator ends
+    # (success, error, or cancel), so the buttons are always restored to idle.
+    reset_event = start_event.then(fn=reset_buttons_idle, inputs=None, outputs=[bt_start, bt_stop], show_progress='hidden')
     after_swap_event = start_event.success(fn=on_resultfiles_finished, inputs=[resultfiles], outputs=[resultimage, resultvideo])
 
     bt_stop.click(fn=stop_swap, cancels=[start_event, after_swap_event], outputs=[bt_start, bt_stop], queue=False)
@@ -787,6 +795,16 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
         except Exception:
             pass
     yield gr.Button(variant="primary", interactive=True), gr.Button(variant="secondary", interactive=False), (gr.Files(value=outfiles) if outfiles else None)
+
+
+def reset_buttons_idle():
+    # Unconditional idle state, run from a .then() after the render generator
+    # ends no matter how (success / error / cancel). Also clears the processing
+    # flag so a stuck run can never block the next Start.
+    global is_processing
+    is_processing = False
+    roop.globals.processing = False
+    return gr.Button(variant="primary", interactive=True), gr.Button(variant="secondary", interactive=False)
 
 
 def stop_swap():
