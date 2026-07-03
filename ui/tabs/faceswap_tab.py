@@ -241,17 +241,21 @@ def faceswap_tab():
         inputs=[ui.globals.ui_selected_swap_model, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
                     roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
-    # Reset the buttons in a SEPARATE .then() event instead of relying on the
-    # generator's final yield reaching the client. With a manual progress
-    # callback active, Gradio 5.9.1 can tear down the generator's event stream
-    # once progress hits 100% BEFORE delivering that last yield -- so the render
-    # finishes and the video is saved, yet Start/Stop never flip back and the UI
-    # looks stuck. `.then()` is guaranteed to run after the generator ends
-    # (success, error, or cancel), so the buttons are always restored to idle.
+    # Reset the buttons in a SEPARATE .then() so they always return to idle after
+    # the render generator ends -- even if its final yield doesn't reach the
+    # client (which can happen with a manual progress callback active).
     reset_event = start_event.then(fn=reset_buttons_idle, inputs=None, outputs=[bt_start, bt_stop], show_progress='hidden')
     after_swap_event = start_event.success(fn=on_resultfiles_finished, inputs=[resultfiles], outputs=[resultimage, resultvideo])
 
-    bt_stop.click(fn=stop_swap, cancels=[start_event, after_swap_event], outputs=[bt_start, bt_stop], queue=False)
+    # Stop is a SOFT stop: it flips roop.globals.processing=False (workers check
+    # this and wind down on their own, after which start_swap finishes normally
+    # and its .then() restores the buttons). We deliberately DON'T use
+    # cancels=[...] here: cancelling a generator that is blocked inside
+    # batch_process_regular (not at a yield) leaves the Gradio event queue in a
+    # half-cancelled state -> the next click reports "error connecting" and the
+    # whole UI wedges until run.py is restarted. queue=False keeps Stop itself
+    # responsive even while the queue is busy.
+    bt_stop.click(fn=stop_swap, outputs=[bt_start, bt_stop], queue=False)
 
     bt_refresh_preview.click(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)            
     bt_toggle_masking.click(fn=on_toggle_masking, inputs=[previewimage, maskimage], outputs=[previewimage, maskimage])            
@@ -772,23 +776,24 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     try:
         batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
     except Exception as e:
-        # Never leave the UI stuck in "processing" on a finalization hiccup:
-        # record the error, warn, and always restore the idle button state below.
-        # By this point batch_process_regular has already muxed and MOVED the
-        # finished video into the output folder, so a late error must NOT stop
-        # us from listing it (user preference: a result WITH an error beats a
-        # clean failure with no result).
         batch_error = e
         traceback.print_exc()
     is_processing = False
-    outfiles = None
-    try:
-        outdir = pathlib.Path(roop.globals.output_path)
-        found = [str(item) for item in outdir.rglob("*") if item.is_file()]
-        if len(found) > 0:
-            outfiles = found
-    except Exception:
-        traceback.print_exc()
+
+    # Collect ONLY this run's outputs. batch_process_regular records each
+    # produced file on its ProcessEntry as `finalname`; using that (instead of
+    # rglob-ing the whole output folder) is both correct and safe -- handing the
+    # entire folder to gr.Files makes Gradio try to provision every past file to
+    # the client, which on a large/Drive-backed output folder makes the Files
+    # component show "Error". This is exactly the behaviour you flagged.
+    outfiles = []
+    for pe in list_files_process:
+        fn = getattr(pe, 'finalname', None)
+        if fn and os.path.isfile(fn):
+            outfiles.append(fn)
+    if not outfiles:
+        outfiles = None
+
     if batch_error is not None:
         try:
             gr.Warning(f'Processing stopped with an error: {batch_error}')
