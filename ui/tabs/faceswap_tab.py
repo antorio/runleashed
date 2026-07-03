@@ -761,36 +761,24 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
 
     batch_error = None
-    run_started = __import__('time').time()
     try:
         batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
     except Exception as e:
-        # Never leave the UI stuck in the "processing" state on a finalization
-        # hiccup (mux/audio/cleanup): fall through and always restore idle below.
+        # Never leave the UI stuck in "processing" on a finalization hiccup:
+        # record the error, warn, and always restore the idle button state below.
+        # By this point batch_process_regular has already muxed and MOVED the
+        # finished video into the output folder, so a late error must NOT stop
+        # us from listing it (user preference: a result WITH an error beats a
+        # clean failure with no result).
         batch_error = e
         traceback.print_exc()
     is_processing = False
-    print("[finish] batch returned, collecting output files...")
-    outfiles = []
+    outfiles = None
     try:
         outdir = pathlib.Path(roop.globals.output_path)
-        allfiles = [item for item in outdir.rglob("*") if item.is_file()]
-        # Only hand THIS run's files to gr.Files. The output folder (on Colab
-        # usually Google Drive) accumulates every past render; giving the whole
-        # folder to gr.Files forces Gradio to copy every single file into its
-        # local cache at the end of every run -- increasingly slow and a prime
-        # candidate for the event erroring out right at the finish (the "error"
-        # text in the Processed file(s) box + button stuck on processing).
-        newfiles = []
-        for f in allfiles:
-            try:
-                if f.stat().st_mtime >= run_started - 5:
-                    newfiles.append(f)
-            except OSError:
-                pass
-        newfiles.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-        outfiles = [str(f) for f in newfiles[:50]]
-        print(f"[finish] output dir has {len(allfiles)} file(s); {len(outfiles)} from this run will be shown")
+        found = [str(item) for item in outdir.rglob("*") if item.is_file()]
+        if len(found) > 0:
+            outfiles = found
     except Exception:
         traceback.print_exc()
     if batch_error is not None:
@@ -798,11 +786,7 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
             gr.Warning(f'Processing stopped with an error: {batch_error}')
         except Exception:
             pass
-    print("[finish] yielding final UI state (buttons back to idle)")
-    if len(outfiles) > 0:
-        yield gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),gr.Files(value=outfiles)
-    else:
-        yield gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),None
+    yield gr.Button(variant="primary", interactive=True), gr.Button(variant="secondary", interactive=False), (gr.Files(value=outfiles) if outfiles else None)
 
 
 def stop_swap():

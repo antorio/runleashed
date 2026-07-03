@@ -276,11 +276,13 @@ class ProcessMgr():
             if num_frame == total_num:
                 break
 
+        # Sentinels MUST always be delivered (blocking, no timeout): if one is
+        # dropped, its worker never receives None, never emits its (False, None),
+        # and the write thread waits on that producer forever -> join() hangs and
+        # the finished video is never muxed/saved. A brief block here is fine --
+        # the workers keep draining, so the queue clears within a frame or two.
         for i in range(num_threads):
-            try:
-                self.frames_queue[i].put(None, block=True, timeout=0.5)
-            except Full:
-                pass
+            self.frames_queue[i].put(None, block=True)
 
 
 
@@ -407,30 +409,40 @@ class ProcessMgr():
                         roop.globals.processing = False
                         import traceback as _tb
                         _tb.print_exc()
-        # Guarded teardown: drain the frame queues while waiting so a blocked
-        # read thread can always make progress and observe processing=False.
-        for _ in range(600):                      # <= ~60s, normally 1 pass
-            if not readthread.is_alive():
-                break
-            for q in self.frames_queue:
-                try:
-                    q.get_nowait()
-                except Exception:
-                    pass
-            readthread.join(timeout=0.1)
-        if readthread.is_alive():
-            print("[finish] WARNING: read thread did not exit cleanly (leaked as daemon)")
-        if worker_error is not None:
-            # Dead workers never sent their (False, None) sentinel; feed the
-            # write thread enough of them so its producer count reaches zero.
+        # ---- teardown ----
+        # CRITICAL: on the normal (no-error) path we must wait for the threads to
+        # finish for real -- the write thread may still be muxing the last frames.
+        # Joining with a timeout here and moving on would close the videowriter
+        # mid-write and the finished video would never reach the output folder.
+        # Timeouts are used ONLY when a worker actually crashed (then blocking
+        # forever is the failure we're avoiding). Success path == original
+        # behaviour (unbounded joins), so a completed render is always saved.
+        if worker_error is None:
+            readthread.join()
+            writethread.join()
+        else:
+            # A crashed worker stopped draining its queue; unblock the read
+            # thread (which may be stuck on a full queue) then feed the write
+            # thread enough sentinels to let it finish what it can and exit.
+            roop.globals.processing = False
+            for _ in range(600):                      # <= ~60s
+                if not readthread.is_alive():
+                    break
+                for q in self.frames_queue:
+                    try:
+                        q.get_nowait()
+                    except Exception:
+                        pass
+                readthread.join(timeout=0.1)
             for q in self.processed_queue:
                 try:
                     q.put((False, None), block=True, timeout=1)
                 except Exception:
                     pass
-        writethread.join(timeout=30)
-        if writethread.is_alive():
-            print("[finish] WARNING: write thread did not exit cleanly (leaked as daemon)")
+            writethread.join(timeout=60)
+            if readthread.is_alive() or writethread.is_alive():
+                print("[finish] WARNING: a worker crashed and a thread did not exit cleanly (leaked as daemon)")
+
         cap.release()
         if self.output_to_file:
             self.videowriter.close()
@@ -439,6 +451,10 @@ class ProcessMgr():
 
         self.frames_queue.clear()
         self.processed_queue.clear()
+        # Surface a worker error only AFTER the writer is closed and whatever
+        # frames did get processed are flushed to the file, so a partial video
+        # still lands in the output folder (user preference: a result WITH an
+        # error beats a clean failure with no result).
         if worker_error is not None:
             raise worker_error
 
