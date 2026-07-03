@@ -32,7 +32,10 @@ selected_preview_index = 0
 is_processing = False            
 
 list_files_process : list[ProcessEntry] = []
-model_swap_choices = ["InSwapper 128", "ReSwapper 128", "ReSwapper 256"]
+# ReSwapper removed per user decision (output quality far below InSwapper).
+# The dropdown component is kept but hidden so all event wirings that use it
+# as an input remain valid with zero risk.
+model_swap_choices = ["InSwapper 128"]
 
 no_face_choices = ["Use untouched original frame","Retry rotated", "Skip Frame", "Skip Frame if no similar face", "Use last swapped"]
 swap_choices = ["First found", "All input faces", "All input faces (random)", "All female", "All male", "All faces", "Selected face"]
@@ -94,7 +97,7 @@ def faceswap_tab():
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
 
                 with gr.Accordion(label="Model & frames", open=False):
-                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False)
+                    ui.globals.ui_selected_swap_model = gr.Dropdown(model_swap_choices, value=model_swap_choices[0], show_label=False, visible=False)
                     forced_fps = gr.Number(value=0, label="Video FPS", precision=0, minimum=0, maximum=120, interactive=True, elem_id="fps_field")
 
             # ----------------------------- CENTER : preview & actions -----------------------------
@@ -139,7 +142,7 @@ def faceswap_tab():
                     fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
                     fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_smooth = gr.Checkbox(label="Landmark + warp smoothing (video)", info="Smooths landmarks AND the alignment matrix (One-Euro, with a pixel deadband so a steady face is left untouched) to remove per-frame jitter/shimmer", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_smooth = gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
                     fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother', interactive=True)
 
                 with gr.Accordion(label="Expression Restorer", open=True):
@@ -758,6 +761,7 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     roop.globals.max_memory = roop.globals.CFG.memory_limit if roop.globals.CFG.memory_limit > 0 else None
 
     batch_error = None
+    run_started = __import__('time').time()
     try:
         batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
     except Exception as e:
@@ -765,10 +769,36 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
         # hiccup (mux/audio/cleanup): fall through and always restore idle below.
         batch_error = e
         traceback.print_exc()
-        gr.Warning(f'Processing stopped with an error: {e}')
     is_processing = False
-    outdir = pathlib.Path(roop.globals.output_path)
-    outfiles = [str(item) for item in outdir.rglob("*") if item.is_file()]
+    print("[finish] batch returned, collecting output files...")
+    outfiles = []
+    try:
+        outdir = pathlib.Path(roop.globals.output_path)
+        allfiles = [item for item in outdir.rglob("*") if item.is_file()]
+        # Only hand THIS run's files to gr.Files. The output folder (on Colab
+        # usually Google Drive) accumulates every past render; giving the whole
+        # folder to gr.Files forces Gradio to copy every single file into its
+        # local cache at the end of every run -- increasingly slow and a prime
+        # candidate for the event erroring out right at the finish (the "error"
+        # text in the Processed file(s) box + button stuck on processing).
+        newfiles = []
+        for f in allfiles:
+            try:
+                if f.stat().st_mtime >= run_started - 5:
+                    newfiles.append(f)
+            except OSError:
+                pass
+        newfiles.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+        outfiles = [str(f) for f in newfiles[:50]]
+        print(f"[finish] output dir has {len(allfiles)} file(s); {len(outfiles)} from this run will be shown")
+    except Exception:
+        traceback.print_exc()
+    if batch_error is not None:
+        try:
+            gr.Warning(f'Processing stopped with an error: {batch_error}')
+        except Exception:
+            pass
+    print("[finish] yielding final UI state (buttons back to idle)")
     if len(outfiles) > 0:
         yield gr.Button(variant="primary", interactive=True),gr.Button(variant="secondary", interactive=False),gr.Files(value=outfiles)
     else:

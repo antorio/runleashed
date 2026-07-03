@@ -15,7 +15,7 @@ from typing import Any, List, Callable
 from roop.typing import Frame, Face
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Thread, Lock
-from queue import Queue
+from queue import Queue, Full
 from tqdm import tqdm
 from roop.ffmpeg_writer import FFMPEG_VideoWriter
 import roop.globals
@@ -74,6 +74,7 @@ class ProcessMgr():
     streamwriter = None
 
     progress_gradio = None
+    _progress_gradio_lock = Lock()
     total_frames = 0
 
     num_frames_no_face = 0
@@ -129,12 +130,10 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
-        # One-Euro smoother for the alignment matrix M (video only). Rides the
-        # SAME toggle + strength as landmark smoothing -- no extra UI option.
-        from roop.face_stabilizer import MatrixStabilizer
-        self.m_stabilizer = MatrixStabilizer(
-            strength=roop.globals.landmark_smoothing_strength
-        )
+        # NOTE: the One-Euro smoothing of the alignment matrix M (batch 2/3) was
+        # REMOVED entirely: even with a pixel deadband it produced visible
+        # micro-jitter on footage whose alignment was already steady (user
+        # confirmed A/B). Landmark smoothing above is the only temporal filter.
 
         roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]
         if options.swap_mode == "all_female" or options.swap_mode == "all_male":
@@ -161,12 +160,8 @@ class ProcessMgr():
             if p is not None:
                 extoption.update({"devicename": devicename})
                 if p.type == "swap":
-                    if self.options.swap_modelname == "InSwapper 128":
-                        extoption.update({"modelname": "inswapper_128.onnx"})
-                    elif self.options.swap_modelname == "ReSwapper 128":
-                        extoption.update({"modelname": "reswapper_128.onnx"})
-                    elif self.options.swap_modelname == "ReSwapper 256":
-                        extoption.update({"modelname": "reswapper_256.onnx"})
+                    # ReSwapper removed -- InSwapper 128 is the only swap model.
+                    extoption.update({"modelname": "inswapper_128.onnx"})
 
                 p.Initialize(extoption)
                 newprocessors.append(p)
@@ -262,18 +257,30 @@ class ProcessMgr():
         if frame_start > 0:
             cap.set(cv2.CAP_PROP_POS_FRAMES,frame_start)
 
-        while True and roop.globals.processing:
+        while roop.globals.processing:
             ret, frame = cap.read()
             if not ret:
                 break
-                
-            self.frames_queue[num_frame % num_threads].put(frame, block=True)
+
+            # put with a short timeout and re-check processing: if a worker died
+            # (its queue is never drained) this loop can still notice the run was
+            # aborted and exit, instead of blocking forever on a full queue and
+            # deadlocking the whole teardown.
+            while roop.globals.processing:
+                try:
+                    self.frames_queue[num_frame % num_threads].put(frame, block=True, timeout=0.2)
+                    break
+                except Full:
+                    continue
             num_frame += 1
             if num_frame == total_num:
                 break
 
         for i in range(num_threads):
-            self.frames_queue[i].put(None)
+            try:
+                self.frames_queue[i].put(None, block=True, timeout=0.5)
+            except Full:
+                pass
 
 
 
@@ -325,8 +332,6 @@ class ProcessMgr():
         self.video_mode = True
         if self.stabilizer is not None:
             self.stabilizer.reset()
-        if getattr(self, 'm_stabilizer', None) is not None:
-            self.m_stabilizer.reset()
 
         cap = cv2.VideoCapture(source_video)
         # endframe is a COUNT (get_video_frame_total), so the range processed is
@@ -370,12 +375,15 @@ class ProcessMgr():
             from roop.StreamWriter import StreamWriter
             self.streamwriter = StreamWriter((width, height), int(fps))
 
-        readthread = Thread(target=self.read_frames_thread, args=(cap, frame_start, frame_end, threads))
+        # daemon=True: even in a worst-case teardown failure these can never
+        # keep the process (or a future run) hostage.
+        readthread = Thread(target=self.read_frames_thread, args=(cap, frame_start, frame_end, threads), daemon=True)
         readthread.start()
 
-        writethread = Thread(target=self.write_frames_thread)
+        writethread = Thread(target=self.write_frames_thread, daemon=True)
         writethread.start()
 
+        worker_error = None
         progress_bar_format = '{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]'
         with tqdm(total=self.total_frames, desc='Processing', unit='frames', dynamic_ncols=True, bar_format=progress_bar_format) as progress:
             with ThreadPoolExecutor(thread_name_prefix='swap_proc', max_workers=self.num_threads) as executor:
@@ -386,10 +394,43 @@ class ProcessMgr():
                     futures.append(future)
                 
                 for future in as_completed(futures):
-                    future.result()
-        # wait for the task to complete
-        readthread.join()
-        writethread.join()
+                    try:
+                        future.result()
+                    except Exception as e:
+                        # A dead worker stops consuming its frames_queue -> the
+                        # read thread blocks forever on put() -> sentinels never
+                        # go out -> every other thread deadlocks -> the UI stays
+                        # on "processing" forever. Record the error, stop the
+                        # pipeline, and fall through to the guarded teardown.
+                        if worker_error is None:
+                            worker_error = e
+                        roop.globals.processing = False
+                        import traceback as _tb
+                        _tb.print_exc()
+        # Guarded teardown: drain the frame queues while waiting so a blocked
+        # read thread can always make progress and observe processing=False.
+        for _ in range(600):                      # <= ~60s, normally 1 pass
+            if not readthread.is_alive():
+                break
+            for q in self.frames_queue:
+                try:
+                    q.get_nowait()
+                except Exception:
+                    pass
+            readthread.join(timeout=0.1)
+        if readthread.is_alive():
+            print("[finish] WARNING: read thread did not exit cleanly (leaked as daemon)")
+        if worker_error is not None:
+            # Dead workers never sent their (False, None) sentinel; feed the
+            # write thread enough of them so its producer count reaches zero.
+            for q in self.processed_queue:
+                try:
+                    q.put((False, None), block=True, timeout=1)
+                except Exception:
+                    pass
+        writethread.join(timeout=30)
+        if writethread.is_alive():
+            print("[finish] WARNING: write thread did not exit cleanly (leaked as daemon)")
         cap.release()
         if self.output_to_file:
             self.videowriter.close()
@@ -398,6 +439,8 @@ class ProcessMgr():
 
         self.frames_queue.clear()
         self.processed_queue.clear()
+        if worker_error is not None:
+            raise worker_error
 
 
 
@@ -411,7 +454,18 @@ class ProcessMgr():
         })
         progress.update(1)
         if self.progress_gradio is not None:
-            self.progress_gradio((progress.n, self.total_frames), desc='Processing', total=self.total_frames, unit='frames')
+            # The Gradio tracker talks to the browser over the event stream; on
+            # Colab that stream goes through the gradio.live tunnel and can die
+            # mid-render. A raising tracker must NEVER kill a worker thread (a
+            # dead worker deadlocks the read/write queue pipeline and leaves the
+            # UI stuck on "processing" forever). Also serialize the calls: 8
+            # workers pushing progress concurrently is not guaranteed safe.
+            try:
+                with self._progress_gradio_lock:
+                    self.progress_gradio((progress.n, self.total_frames), desc='Processing', total=self.total_frames, unit='frames')
+            except Exception as e:
+                print(f"[finish] gradio progress tracker failed ({e}); continuing render without UI progress")
+                self.progress_gradio = None
 
 
 
@@ -739,24 +793,6 @@ class ProcessMgr():
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
         else:
             aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
-
-        # One-Euro smoothing of the alignment matrix (video only; rides the
-        # landmark-smoothing toggle). estimate_norm turns residual landmark
-        # noise into warp rotation/scale/position flicker; smoothing M's
-        # similarity parameters removes that shimmer at the source. A pixel
-        # deadband inside the stabilizer means that when the alignment is
-        # already steady it returns the RAW M (changed=False) and we skip the
-        # re-warp entirely -- so a clean track gets zero added resampling and no
-        # micro-jitter. Skipped on the rotated-retry path (different coordinate
-        # space) and for image batches.
-        if (rotation_action is None
-                and roop.globals.landmark_smoothing
-                and (self.video_mode or roop.globals.force_landmark_smoothing)
-                and getattr(self, 'm_stabilizer', None) is not None):
-            M_s, changed = self.m_stabilizer.smooth(M, target_face.bbox, subsample_size)
-            if changed:
-                aligned_img = cv2.warpAffine(frame, M_s, (subsample_size, subsample_size), borderValue=0.0)
-                M = M_s
 
         fake_frame = aligned_img
         target_face.matrix = M
