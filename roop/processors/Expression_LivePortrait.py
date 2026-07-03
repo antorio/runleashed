@@ -237,8 +237,8 @@ class Expression_LivePortrait():
             if getattr(roop.globals, 'expression_pose_lock', True):
                 kp_driving = lpu.lock_pose(
                     kp_driving, kp_source,
-                    scale_lock=getattr(roop.globals, 'expression_pose_lock_scale', True),
-                    rotation_lock=getattr(roop.globals, 'expression_pose_lock_rotation', False))
+                    scale_tol=float(getattr(roop.globals, 'expression_pose_lock_scale_tol', 0.04)),
+                    rot_tol_deg=float(getattr(roop.globals, 'expression_pose_lock_rot_tol', 2.0)))
 
             g_in = self.generator.get_inputs()
             if not getattr(self, '_gen_io_logged', False):
@@ -301,13 +301,20 @@ class Expression_LivePortrait():
                     except Exception:
                         pass
                     ch, cw = swapped_crop.shape[:2]
+                    # spread deviation of the RAW driving vs source (what the
+                    # scale tolerance judges) -- for tuning scale_tol from logs.
+                    sdev = 0.0
+                    try:
+                        sdev = float(np.sqrt((kd0 ** 2).sum()) / (np.sqrt((ks0 ** 2).sum()) + 1e-9))
+                    except Exception:
+                        pass
                     pl = getattr(roop.globals, 'expression_pose_lock', True)
-                    pls = getattr(roop.globals, 'expression_pose_lock_scale', True)
-                    plr = getattr(roop.globals, 'expression_pose_lock_rotation', False)
+                    stol = float(getattr(roop.globals, 'expression_pose_lock_scale_tol', 0.04))
+                    rtol = float(getattr(roop.globals, 'expression_pose_lock_rot_tol', 2.0))
                     pw = getattr(roop.globals, 'expression_power', 1.0)
                     print(f"[expr-delta] exp|max={ed:.4f}  sig_before={sig_before:.4f}  "
-                          f"sig_after={sig_after:.4f}  kept={kept:.0f}%  kabsch_rot={ang:.1f}deg  "
-                          f"crop={cw}x{ch}  lock={pl}/scale={pls}/rot={plr}  power={pw:.2f}  "
+                          f"sig_after={sig_after:.4f}  kept={kept:.0f}%  kabsch_rot={ang:.1f}deg(tol {rtol:.1f})  "
+                          f"sdev={sdev:.4f}(tol +/-{stol:.3f})  crop={cw}x{ch}  lock={pl}  power={pw:.2f}  "
                           f"factor={factor:.2f}  full={full}  "
                           f"stitch={bool(getattr(roop.globals,'expression_stitching',False) and self.stitcher is not None)}")
                 except Exception:

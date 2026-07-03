@@ -129,6 +129,12 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
+        # One-Euro smoother for the alignment matrix M (video only). Rides the
+        # SAME toggle + strength as landmark smoothing -- no extra UI option.
+        from roop.face_stabilizer import MatrixStabilizer
+        self.m_stabilizer = MatrixStabilizer(
+            strength=roop.globals.landmark_smoothing_strength
+        )
 
         roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]
         if options.swap_mode == "all_female" or options.swap_mode == "all_male":
@@ -319,6 +325,8 @@ class ProcessMgr():
         self.video_mode = True
         if self.stabilizer is not None:
             self.stabilizer.reset()
+        if getattr(self, 'm_stabilizer', None) is not None:
+            self.m_stabilizer.reset()
 
         cap = cv2.VideoCapture(source_video)
         # frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -724,6 +732,21 @@ class ProcessMgr():
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
         else:
             aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
+
+        # One-Euro smoothing of the alignment matrix (video only; rides the
+        # landmark-smoothing toggle). estimate_norm turns residual landmark
+        # noise into warp rotation/scale/position flicker; smoothing M's
+        # similarity parameters removes that shimmer at the source. Skipped on
+        # the rotated-retry path (rotcutframe lives in a different coordinate
+        # space, its track would mismatch) and for image batches.
+        if (rotation_action is None
+                and roop.globals.landmark_smoothing
+                and (self.video_mode or roop.globals.force_landmark_smoothing)
+                and getattr(self, 'm_stabilizer', None) is not None):
+            M_s = self.m_stabilizer.smooth(M, target_face.bbox, subsample_size)
+            if not np.allclose(M_s, M):
+                aligned_img = cv2.warpAffine(frame, M_s, (subsample_size, subsample_size), borderValue=0.0)
+            M = M_s
 
         fake_frame = aligned_img
         target_face.matrix = M

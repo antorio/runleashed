@@ -286,30 +286,69 @@ def apply_stitching(session, kp_source, kp_driving, log=False, invert=True):
     return new
 
 
-def lock_pose(kp_driving, kp_source, scale_lock=True, rotation_lock=False):
-    """Deterministic pose lock (no model). Re-centre (and optionally re-scale /
-    de-rotate) the driving keypoints so their GLOBAL position/scale/orientation
-    match the source's, leaving only the LOCAL expression deformation. Removes
-    the head shift / enlarge / drift / rotation the generator otherwise shows."""
+def lock_pose(kp_driving, kp_source, scale_tol=0.04, rot_tol_deg=2.0):
+    """Deterministic pose lock with TOLERANCE (no model).
+
+    kp_source and kp_driving are built from the SAME motion points / pose /
+    scale / translation -- only the expression tensor differs -- so what this
+    locks is the GLOBAL similarity component of the expression delta itself.
+    That component is a mix of genuine expression (a jaw drop really increases
+    keypoint spread; a small head bob reads as rotation) and misregistration
+    junk (amplified by expression_power). A binary full-lock removes both,
+    which damps real expressions; no lock keeps both, which drifts.
+
+    Tolerance = the best of both: deviations WITHIN the tolerance pass through
+    as genuine expression; only the EXCESS is corrected toward the source.
+      - translation: always fully locked (a net centroid shift is essentially
+        never genuine expression).
+      - scale: spread ratio driving/source may deviate up to +/-scale_tol
+        (fraction); the excess is clamped. scale_tol=0 == old full scale-lock.
+      - rotation: the Kabsch angle may deviate up to rot_tol_deg; only the
+        excess rotation (same axis) is removed. rot_tol_deg=0 == old full
+        rotation-lock. Very large tolerances == no scale/rotation lock.
+    """
     kd = np.asarray(kp_driving, dtype=np.float32).copy()
     ks = np.asarray(kp_source, dtype=np.float32)
     c_d = kd.mean(axis=1, keepdims=True)
     c_s = ks.mean(axis=1, keepdims=True)
     kd0 = kd - c_d
     ks0 = ks - c_s
-    if rotation_lock:
-        try:
-            H = kd0[0].T @ ks0[0]                     # 3x3
-            U, S, Vt = np.linalg.svd(H)
-            d = np.sign(np.linalg.det(Vt.T @ U.T))
-            R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T   # rotate driving -> source
-            kd0 = (kd0[0] @ R.T)[None]
-        except Exception:
-            pass
-    kd = kd0 + c_s                                    # translation lock
-    if scale_lock:
-        s_d = float(np.sqrt((kd0 ** 2).sum())) + 1e-6
-        s_s = float(np.sqrt((ks0 ** 2).sum())) + 1e-6
-        ratio = float(np.clip(s_s / s_d, 0.5, 2.0))   # clamp to avoid blow-up -> NaN
-        kd = c_s + (kd - c_s) * ratio                 # scale lock
+
+    # ---- rotation: clamp the Kabsch angle to rot_tol_deg -------------------
+    try:
+        H = kd0[0].T @ ks0[0]                     # 3x3
+        U, S, Vt = np.linalg.svd(H)
+        d = np.sign(np.linalg.det(Vt.T @ U.T))
+        R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T   # rotates driving -> source (full)
+        cosphi = np.clip((np.trace(R) - 1.0) / 2.0, -1.0, 1.0)
+        phi = float(np.arccos(cosphi))            # radians, >= 0
+        tol = float(np.deg2rad(max(0.0, rot_tol_deg)))
+        if phi > tol and np.sin(phi) > 1e-6:
+            # rotation axis from the skew-symmetric part of R
+            axis = np.array([R[2, 1] - R[1, 2],
+                             R[0, 2] - R[2, 0],
+                             R[1, 0] - R[0, 1]], dtype=np.float64) / (2.0 * np.sin(phi))
+            n = np.linalg.norm(axis)
+            if n > 1e-6:
+                axis /= n
+                psi = phi - tol                   # remove only the excess
+                K = np.array([[0, -axis[2], axis[1]],
+                              [axis[2], 0, -axis[0]],
+                              [-axis[1], axis[0], 0]], dtype=np.float64)
+                R_p = np.eye(3) + np.sin(psi) * K + (1.0 - np.cos(psi)) * (K @ K)
+                kd0 = (kd0[0] @ R_p.T)[None].astype(np.float32)
+    except Exception:
+        pass
+
+    kd = kd0 + c_s                                # translation lock (always full)
+
+    # ---- scale: clamp the spread deviation to +/-scale_tol ------------------
+    s_d = float(np.sqrt((kd0 ** 2).sum())) + 1e-6
+    s_s = float(np.sqrt((ks0 ** 2).sum())) + 1e-6
+    dev = s_d / s_s                               # driving spread relative to source
+    tol_s = max(0.0, float(scale_tol))
+    target = float(np.clip(dev, 1.0 - tol_s, 1.0 + tol_s))
+    ratio = float(np.clip(target / dev, 0.5, 2.0))  # clamp to avoid blow-up -> NaN
+    if ratio != 1.0:
+        kd = c_s + (kd - c_s) * ratio
     return kd.astype(np.float32)

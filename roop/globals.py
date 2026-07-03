@@ -155,12 +155,19 @@ expression_lp_cal_scale = 1.0
 expression_lp_cal_dx = 0.0
 expression_lp_cal_dy = 0.0
 expression_lp_cal_rot = 0.0
-# Model-free pose lock for the expression restorer: re-centre (and re-scale)
-# driving keypoints to the source so only the local expression transfers and the
-# head doesn't shift/enlarge/drift. Works on the (default) old in-place approach.
+# Adaptive pose lock for the expression restorer (jalur in-place). What gets
+# locked is the GLOBAL similarity component of the expression delta; the
+# tolerances let genuine global expression through and clamp only the excess:
+#   scale_tol   : spread deviation allowed (fraction). 0 = old full scale-lock,
+#                 large (e.g. 10) = scale-lock off. 0.04 keeps jaw-drops intact.
+#   rot_tol_deg : Kabsch rotation allowed (degrees). 0 = old full rotation-lock,
+#                 large (e.g. 180) = rotation-lock off. Logs show real expression
+#                 rotation at 0.7-3 deg with junk spikes 4-6.5 deg -> 2.0.
+# Translation is always fully locked while expression_pose_lock is True.
+# Tune via [expr-delta] (now prints sdev + kabsch vs the tolerances).
 expression_pose_lock = True
-expression_pose_lock_scale = True
-expression_pose_lock_rotation = True
+expression_pose_lock_scale_tol = 0.04
+expression_pose_lock_rot_tol = 2.0
 # Pose gate: LivePortrait is out-of-distribution at extreme head pose (far back /
 # strong profile) and smears the face. Fade the restorer out between 'soft' and
 # 'hard' degrees of max(|pitch|,|yaw|), skipping it entirely past 'hard' (keeps
