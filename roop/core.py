@@ -131,33 +131,59 @@ def pre_check() -> bool:
     if sys.version_info < (3, 9):
         update_status('Python version is not supported - please upgrade to 3.9 or higher.')
         return False
-    
-    download_directory_path = util.resolve_relative_path('../models')
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/inswapper_128.onnx'])
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/GFPGANv1.4.onnx'])
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/restoreformer_plus_plus.onnx'])
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/xseg.onnx'])
-    # FaceFusion DeepFaceLab-XSeg occluder variants (same arch, different weights).
-    # Used by the "FF XSeg 1/2/3" and "FF XSeg (combined)" masking engines.
-    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_1.onnx'])
-    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.1.0/xseg_2.onnx'])
-    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.2.0/xseg_3.onnx'])
-    # BiSeNet face-parsing model for the optional "Face Parser" masking engine.
-    # Saved as ./models/bisenet_resnet_34.onnx (matches Mask_FaceParser lookup).
-    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/bisenet_resnet_34.onnx'])
-    # FaceFusion 2dfan4: high-accuracy 68-point landmarker (optional "Hi-accuracy
-    # 68pt landmarker" toggle). Saved as ./models/2dfan4.onnx (matches loader).
-    util.conditional_download(download_directory_path, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/2dfan4.onnx'])
-    # LivePortrait expression restorer models (optional feature).
-    lp_dir = util.resolve_relative_path('../models/liveportrait')
-    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_feature_extractor.onnx'])
-    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_motion_extractor.onnx'])
-    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_generator.onnx'])
-    util.conditional_download(lp_dir, ['https://github.com/facefusion/facefusion-assets/releases/download/models-3.0.0/live_portrait_stitcher.onnx'])
-    download_directory_path = util.resolve_relative_path('../models/CLIP')
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/rd64-uni-refined.pth'])
-    download_directory_path = util.resolve_relative_path('../models/CodeFormer')
-    util.conditional_download(download_directory_path, ['https://huggingface.co/countfloyd/deepfake/resolve/main/CodeFormerv0.1.onnx'])
+
+    # All model weights are hosted in ONE HuggingFace repo (mirrored there from
+    # the original countfloyd/deepfake + facefusion-assets sources). HF's CDN is
+    # reliable from Colab/datacenter IPs -- unlike GitHub release assets, which
+    # rate-limit those IPs and were the cause of the "download stuck from Colab
+    # but works in a browser" hangs. hf_hub_download also resumes + retries, so a
+    # dropped connection no longer restarts from zero.
+    HF_REPO = 'antorio/runleashed-models'
+    models_root = util.resolve_relative_path('../models')
+
+    # (filename in the HF repo root, local subdir under ../models)
+    model_files = [
+        ('inswapper_128.onnx', ''),
+        ('GFPGANv1.4.onnx', ''),
+        ('restoreformer_plus_plus.onnx', ''),
+        ('xseg.onnx', ''),
+        ('xseg_1.onnx', ''),
+        ('xseg_2.onnx', ''),
+        ('xseg_3.onnx', ''),
+        ('bisenet_resnet_34.onnx', ''),
+        ('2dfan4.onnx', ''),
+        ('live_portrait_feature_extractor.onnx', 'liveportrait'),
+        ('live_portrait_motion_extractor.onnx', 'liveportrait'),
+        ('live_portrait_generator.onnx', 'liveportrait'),
+        ('live_portrait_stitcher.onnx', 'liveportrait'),
+        ('rd64-uni-refined.pth', 'CLIP'),
+        ('CodeFormerv0.1.onnx', 'CodeFormer'),
+    ]
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception:
+        hf_hub_download = None
+
+    for filename, subdir in model_files:
+        target_dir = os.path.join(models_root, subdir) if subdir else models_root
+        os.makedirs(target_dir, exist_ok=True)
+        target_path = os.path.join(target_dir, filename)
+        if os.path.exists(target_path):
+            continue
+        got = False
+        if hf_hub_download is not None:
+            try:
+                # download into an HF cache then copy to the exact path/name the
+                # loaders expect (they look for ../models[/subdir]/<filename>).
+                cached = hf_hub_download(repo_id=HF_REPO, filename=filename)
+                shutil.copyfile(cached, target_path)
+                got = True
+            except Exception as e:
+                update_status(f'HF download failed for {filename} ({e}); falling back to direct URL')
+        if not got:
+            # Fallback: direct resolve URL from the same HF repo (still HF CDN).
+            util.conditional_download(target_dir, [f'https://huggingface.co/{HF_REPO}/resolve/main/{filename}'])
 
     if not shutil.which('ffmpeg'):
        update_status('ffmpeg is not installed.')
