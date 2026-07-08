@@ -81,8 +81,12 @@ def faceswap_tab():
                 with gr.Accordion(label="Advanced Masking", open=False):
                     selected_mask_engine = gr.Dropdown(["None", "Clip2Seg", "DFL XSeg", "Face Parser (BiSeNet)", "FF XSeg 1", "FF XSeg 2", "FF XSeg 3", "FF XSeg (combined)"], value="DFL XSeg", label="Face masking engine")
                     clip_text = gr.Textbox(label="List of objects to mask and restore back on fake face", value="cup,hands,hair,banana", interactive=False)
-                    chk_showmaskoffsets = gr.Checkbox(label="Show mask overlay in preview", value=False, interactive=True)
+                    # "Show mask overlay in preview" toggle removed from the UI.
+                    # Kept as a hidden constant so the preview wiring that still
+                    # references it stays valid (always False now).
+                    chk_showmaskoffsets = gr.Checkbox(label="Show mask overlay in preview", value=False, interactive=True, visible=False)
                     chk_restoreoriginalmouth = gr.Checkbox(label="Restore original mouth area", value=False, interactive=True)
+                    chk_restoreoriginaleyes = gr.Checkbox(label="Restore eyes", info="Puts the target's original eye interior back (brows/lids excluded)", value=False, interactive=True)
                     with gr.Row():
                         mask_top = gr.Slider(0, 1.0, value=0, label="Offset Top", step=0.01, interactive=True)
                         mask_bottom = gr.Slider(0, 1.0, value=0, label="Offset Bottom", step=0.01, interactive=True)
@@ -204,7 +208,7 @@ def faceswap_tab():
     cb_expr_brows.change(fn=on_expr_brows, inputs=cb_expr_brows, outputs=[])
 
     previewinputs = [ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, fake_preview, ui.globals.ui_selected_enhancer, selected_face_detection,
-                        max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text, no_face_action, vr_mode, autorotate, maskimage, chk_showmaskoffsets, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale]
+                        max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text, no_face_action, vr_mode, autorotate, maskimage, chk_showmaskoffsets, chk_restoreoriginalmouth, chk_restoreoriginaleyes, num_swap_steps, ui.globals.ui_upscale]
     previewoutputs = [previewimage, maskimage, preview_frame_num] 
     input_faces.select(on_select_input_face, None, None).success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
     
@@ -239,7 +243,7 @@ def faceswap_tab():
 
     start_event = bt_start.click(fn=start_swap, 
         inputs=[ui.globals.ui_selected_swap_model, ui.globals.ui_selected_enhancer, selected_face_detection, roop.globals.keep_frames, roop.globals.wait_after_extraction,
-                    roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, num_swap_steps, ui.globals.ui_upscale, maskimage],
+                    roop.globals.skip_audio, max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text,video_swapping_method, no_face_action, vr_mode, autorotate, chk_restoreoriginalmouth, chk_restoreoriginaleyes, num_swap_steps, ui.globals.ui_upscale, maskimage],
         outputs=[bt_start, bt_stop, resultfiles], show_progress='full')
     # Reset the buttons in a SEPARATE .then() so they always return to idle after
     # the render generator ends -- even if its final yield doesn't reach the
@@ -537,7 +541,7 @@ def on_end_face_selection():
 
 
 def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhancer, detection, face_distance, blend_ratio,
-                              selected_mask_engine, clip_text, no_face_action, vr_mode, auto_rotate, maskimage, show_face_area, restore_original_mouth, num_steps, upsample):
+                              selected_mask_engine, clip_text, no_face_action, vr_mode, auto_rotate, maskimage, show_face_area, restore_original_mouth, restore_original_eyes, num_steps, upsample):
     global SELECTED_INPUT_FACE_INDEX, manual_masking, current_video_fps
 
     from roop.core import live_swap, get_processing_plugins
@@ -596,7 +600,7 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
         face_index = 0
    
     options = ProcessOptions(swap_model, get_processing_plugins(mask_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
-                              roop.globals.face_swap_mode, face_index, clip_text, maskimage, num_steps, roop.globals.subsample_size, show_face_area, restore_original_mouth)
+                              roop.globals.face_swap_mode, face_index, clip_text, maskimage, num_steps, roop.globals.subsample_size, show_face_area, restore_original_mouth, restore_original_eyes=restore_original_eyes)
 
     current_frame = live_swap(current_frame, options)
     if current_frame is None:
@@ -728,7 +732,7 @@ def translate_swap_mode(dropdown_text):
 
 
 def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extraction, skip_audio, face_distance, blend_ratio,
-                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
+                selected_mask_engine, clip_text, processing_method, no_face_action, vr_mode, autorotate, restore_original_mouth, restore_original_eyes, num_swap_steps, upsample, imagemask, progress=gr.Progress()):
     from ui.main import prepare_environment
     from roop.core import batch_process_regular
     global is_processing, list_files_process
@@ -774,7 +778,7 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
 
     batch_error = None
     try:
-        batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
+        batch_process_regular(swap_model, output_method, list_files_process, mask_engine, clip_text, processing_method == "In-Memory processing", imagemask, restore_original_mouth, restore_original_eyes, num_swap_steps, progress, SELECTED_INPUT_FACE_INDEX)
     except Exception as e:
         batch_error = e
         traceback.print_exc()

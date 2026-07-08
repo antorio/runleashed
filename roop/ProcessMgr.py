@@ -887,6 +887,11 @@ class ProcessMgr():
             mouth_cutout, mouth_bb = self.create_mouth_mask(target_face, frame)
             result = self.apply_mouth_area(result, mouth_cutout, mouth_bb)
 
+        # Restore original eyes (inside-eye region only; brows/lids excluded).
+        if getattr(self.options, 'restore_original_eyes', False):
+            eyes = self.create_eyes_masks(target_face, frame)
+            result = self.apply_eyes_area(result, eyes)
+
         if rotation_action is not None:
             fake_frame = self.auto_unrotate_frame(result, rotation_action)
             result = self.paste_simple(fake_frame, saved_frame, startX, startY)
@@ -1238,6 +1243,59 @@ class ProcessMgr():
 
 
 
+    # Eye restoration: mirror of the mouth restore, but for the two eyes as
+    # SEPARATE tight boxes (Opsi A). Instead of hard-coding 2d106 eye indices
+    # (which risks pasting in the wrong place if the index convention differs),
+    # the eye landmark points are found geometrically: of the 106 points, take
+    # those closest to each detector kps eye centre. This is robust to the exact
+    # index layout and still excludes brows (brow points sit well above the eye
+    # centre, outside the selection radius). Returns two (cutout, box) pairs.
+    def create_eyes_masks(self, face: Face, frame: Frame):
+        results = []
+        landmarks = getattr(face, 'landmark_2d_106', None)
+        kps = getattr(face, 'kps', None)
+        if landmarks is None or kps is None:
+            return results
+        kps = np.asarray(kps, dtype=np.float32).reshape(-1, 2)
+        if kps.shape[0] < 2:
+            return results
+        lm = np.asarray(landmarks, dtype=np.float32)
+        left_eye_c, right_eye_c = kps[0], kps[1]
+        iod = float(np.linalg.norm(left_eye_c - right_eye_c)) + 1e-6
+        # selection radius: tight enough to stay on the eye, not the brow/lid edge
+        radius = 0.22 * iod
+        for eye_c in (left_eye_c, right_eye_c):
+            d = np.linalg.norm(lm - eye_c, axis=1)
+            sel = lm[d < radius]
+            if sel.shape[0] < 3:
+                # fallback: nearest 6 points to the eye centre
+                order = np.argsort(d)[:6]
+                sel = lm[order]
+            min_x, min_y = np.min(sel, axis=0)
+            max_x, max_y = np.max(sel, axis=0)
+            eye_w = max(1, int(max_x - min_x))
+            eye_h = max(1, int(max_y - min_y))
+            # small proportional padding: enough to feather cleanly, not so much
+            # it grabs the brow (kept smaller than the mouth's padding on purpose)
+            pad_x = int(eye_w * 0.25)
+            pad_y = int(eye_h * 0.25)
+            min_x = max(0, int(min_x) - pad_x)
+            min_y = max(0, int(min_y) - pad_y)
+            max_x = min(frame.shape[1], int(max_x) + pad_x)
+            max_y = min(frame.shape[0], int(max_y) + pad_y)
+            if max_x - min_x < 2 or max_y - min_y < 2:
+                continue
+            cutout = frame[min_y:max_y, min_x:max_x].copy()
+            results.append((cutout, (min_x, min_y, max_x, max_y)))
+        return results
+
+    def apply_eyes_area(self, frame: np.ndarray, eyes):
+        # eyes: list of (cutout, (min_x,min_y,max_x,max_y)); reuses the same
+        # feathered blend + color transfer as the mouth path for consistency.
+        for cutout, box in eyes:
+            frame = self.apply_mouth_area(frame, cutout, box)
+        return frame
+
     def create_feathered_mask(self, shape, feather_amount=30):
         mask = np.zeros(shape[:2], dtype=np.float32)
         center = (shape[1] // 2, shape[0] // 2)
@@ -1300,7 +1358,12 @@ class ProcessMgr():
         target_mean = target_mean.reshape(1, 1, 3)
         target_std = target_std.reshape(1, 1, 3)
 
-        # Perform the color transfer
+        # Perform the color transfer. Guard against a (near-)zero source std --
+        # a uniform patch (can happen on a small dark eye cutout) would divide by
+        # zero and produce NaNs, which then get silently caught upstream and drop
+        # the restore. Clamp the source std to a small floor so the scale stays
+        # finite (colour just isn't stretched when there's nothing to stretch).
+        source_std = np.maximum(source_std, 1e-3)
         source = (source - source_mean) * (target_std / source_std) + target_mean
         return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
 

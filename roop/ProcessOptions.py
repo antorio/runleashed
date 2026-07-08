@@ -1,6 +1,6 @@
 class ProcessOptions:
 
-    def __init__(self, swap_model, processordefines:dict, face_distance,  blend_ratio, swap_mode, selected_index, masking_text, imagemask, num_steps, subsample_size, show_face_area, restore_original_mouth, show_mask=False):
+    def __init__(self, swap_model, processordefines:dict, face_distance,  blend_ratio, swap_mode, selected_index, masking_text, imagemask, num_steps, subsample_size, show_face_area, restore_original_mouth, show_mask=False, restore_original_eyes=False):
         if swap_model is not None: 
             self.swap_modelname = swap_model
             self.swap_output_size = int(swap_model.split()[-1])
@@ -18,4 +18,5 @@ class ProcessOptions:
         self.show_face_masking = show_mask
         self.subsample_size = subsample_size
         self.restore_original_mouth = restore_original_mouth
+        self.restore_original_eyes = restore_original_eyes
         self.max_num_reuse_frame = 15

@@ -270,7 +270,7 @@ def live_swap(frame, options):
     return newframe
 
 
-def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], masking_engine:str, new_clip_text:str, use_new_method, imagemask, restore_original_mouth, num_swap_steps, progress, selected_index = 0) -> None:
+def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], masking_engine:str, new_clip_text:str, use_new_method, imagemask, restore_original_mouth, restore_original_eyes, num_swap_steps, progress, selected_index = 0) -> None:
     global clip_text, process_mgr
 
     release_resources()
@@ -282,7 +282,7 @@ def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], m
         selected_index = 0
     options = ProcessOptions(swap_model, get_processing_plugins(masking_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
                               roop.globals.face_swap_mode, selected_index, new_clip_text, mask, num_swap_steps,
-                              roop.globals.subsample_size, False, restore_original_mouth)
+                              roop.globals.subsample_size, False, restore_original_mouth, restore_original_eyes=restore_original_eyes)
     process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
     batch_process(output_method, files, use_new_method)
     return
