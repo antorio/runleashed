@@ -1275,10 +1275,14 @@ class ProcessMgr():
             max_x, max_y = np.max(sel, axis=0)
             eye_w = max(1, int(max_x - min_x))
             eye_h = max(1, int(max_y - min_y))
-            # small proportional padding: enough to feather cleanly, not so much
-            # it grabs the brow (kept smaller than the mouth's padding on purpose)
-            pad_x = int(eye_w * 0.25)
-            pad_y = int(eye_h * 0.25)
+            # Looser padding than before (0.25 -> 0.45). FaceFusion feathers the
+            # whole eye-region mask heavily (mask_blur ~0.3-0.5) rather than using
+            # a hard box; a soft edge needs ROOM to fade, so the box is widened a
+            # bit and the actual restored ellipse stays inside it. Brows are still
+            # excluded: even at 0.45 the box top stays below the brow because the
+            # eye landmarks themselves sit well under it.
+            pad_x = int(eye_w * 0.45)
+            pad_y = int(eye_h * 0.45)
             min_x = max(0, int(min_x) - pad_x)
             min_y = max(0, int(min_y) - pad_y)
             max_x = min(frame.shape[1], int(max_x) + pad_x)
@@ -1289,11 +1293,51 @@ class ProcessMgr():
             results.append((cutout, (min_x, min_y, max_x, max_y)))
         return results
 
+    def create_soft_eye_mask(self, shape):
+        """Heavily-feathered elliptical mask for eye restoration.
+
+        Unlike create_feathered_mask (feather clamped to <=30px and tuned for the
+        large mouth box), this fills a smaller inner ellipse and applies a Gaussian
+        blur whose radius scales with the box size (~35% of the smaller side). The
+        result is a wide, gradual edge so the boundary stays invisible even when
+        the face/ER is jittering -- the FaceFusion approach of leaning on a soft
+        mask edge rather than a crisp box."""
+        h, w = shape[:2]
+        mask = np.zeros((h, w), dtype=np.float32)
+        # inner ellipse noticeably smaller than the box so the blur has room to
+        # fade to zero well before the box edge (no hard cutoff at the border)
+        ax_w = max(1, int(w * 0.26))
+        ax_h = max(1, int(h * 0.26))
+        cv2.ellipse(mask, (w // 2, h // 2), (ax_w, ax_h), 0, 0, 360, 1.0, -1)
+        # blur radius ~50% of the smaller side, odd kernel, generous minimum
+        k = max(9, int(min(w, h) * 0.5))
+        if k % 2 == 0:
+            k += 1
+        mask = cv2.GaussianBlur(mask, (k, k), 0)
+        m = float(mask.max())
+        if m > 1e-6:
+            mask /= m
+        return mask
+
     def apply_eyes_area(self, frame: np.ndarray, eyes):
-        # eyes: list of (cutout, (min_x,min_y,max_x,max_y)); reuses the same
-        # feathered blend + color transfer as the mouth path for consistency.
+        # Same color-transfer + blend as the mouth path, but with the dedicated
+        # soft eye mask so the edge is wide and invisible under motion.
         for cutout, box in eyes:
-            frame = self.apply_mouth_area(frame, cutout, box)
+            min_x, min_y, max_x, max_y = box
+            bw, bh = max_x - min_x, max_y - min_y
+            if cutout is None or bw < 2 or bh < 2:
+                continue
+            try:
+                resized = cv2.resize(cutout, (bw, bh))
+                roi = frame[min_y:max_y, min_x:max_x]
+                if roi.shape != resized.shape:
+                    resized = cv2.resize(resized, (roi.shape[1], roi.shape[0]))
+                corrected = self.apply_color_transfer(resized, roi)
+                mask = self.create_soft_eye_mask(resized.shape)[:, :, np.newaxis]
+                blended = (corrected * mask + roi * (1 - mask)).astype(np.uint8)
+                frame[min_y:max_y, min_x:max_x] = blended
+            except Exception as e:
+                print(f'Error {e}')
         return frame
 
     def create_feathered_mask(self, shape, feather_amount=30):

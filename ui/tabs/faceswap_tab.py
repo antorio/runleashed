@@ -86,7 +86,7 @@ def faceswap_tab():
                     # references it stays valid (always False now).
                     chk_showmaskoffsets = gr.Checkbox(label="Show mask overlay in preview", value=False, interactive=True, visible=False)
                     chk_restoreoriginalmouth = gr.Checkbox(label="Restore original mouth area", value=False, interactive=True)
-                    chk_restoreoriginaleyes = gr.Checkbox(label="Restore eyes", info="Puts the target's original eye interior back (brows/lids excluded)", value=False, interactive=True)
+                    chk_restoreoriginaleyes = gr.Checkbox(label="Restore eyes", value=False, interactive=True)
                     with gr.Row():
                         mask_top = gr.Slider(0, 1.0, value=0, label="Offset Top", step=0.01, interactive=True)
                         mask_bottom = gr.Slider(0, 1.0, value=0, label="Offset Bottom", step=0.01, interactive=True)
