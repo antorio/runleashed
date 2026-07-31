@@ -599,19 +599,35 @@ class ProcessMgr():
                         break
             
             elif self.options.swap_mode == "selected":
-                num_targetfaces = len(self.target_face_datas) 
-                use_index = num_targetfaces == 1
-                for i,tf in enumerate(self.target_face_datas):
+                # The picked source face now ALWAYS applies here, exactly like it
+                # does in "first" / "all" / "all_female" / "all_male".
+                #
+                # Before: when 2+ target faces were marked, this used
+                # process_face(i, ...) -- pairing target face i with INPUT face i
+                # -- and silently ignored the source face you picked in the UI.
+                # That is why changing the source face did nothing in "selected"
+                # mode while it worked in every other mode, and why the same clip
+                # looked completely different between modes: a DIFFERENT SOURCE
+                # FACE was being applied, which reads as "different landmarking".
+                # The 1:1 pairing behaviour still exists as its own mode:
+                # "all_input" (detected face i <- input face i).
+                num_targetfaces = len(self.target_face_datas)
+                idx = self.options.selected_index
+                if idx >= len(self.input_face_datas):
+                    idx = 0
+                swapped_faces = []
+                for tf in self.target_face_datas:
                     for face in faces:
+                        if any(face is s for s in swapped_faces):
+                            continue    # don't swap the same face twice
                         if compute_cosine_distance(tf.embedding, face.embedding) <= self.options.face_distance_threshold:
-                            if i < len(self.input_face_datas):
-                                if use_index:
-                                    temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
-                                else:
-                                    temp_frame = self.process_face(i, face, temp_frame)
+                            if len(self.input_face_datas) > 0:
+                                temp_frame = self.process_face(idx, face, temp_frame)
+                                swapped_faces.append(face)
                                 num_faces_found += 1
-                            if not roop.globals.vr_mode and num_faces_found == num_targetfaces:
-                                break
+                            break       # this target is handled, go to the next
+                    if not roop.globals.vr_mode and num_faces_found == num_targetfaces:
+                        break
             elif self.options.swap_mode == "all_female" or self.options.swap_mode == "all_male":
                 gender = 'F' if self.options.swap_mode == "all_female" else 'M'
                 for face in faces:
