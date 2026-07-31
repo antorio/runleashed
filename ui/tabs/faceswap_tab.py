@@ -148,6 +148,7 @@ def faceswap_tab():
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
                     fs_lmk_smooth = gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
                     fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother', interactive=True)
+                    fs_lmk_deadzone = gr.Slider(0.0, 0.03, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Still-face dead-zone", info='freezes sub-threshold wobble while the head is still; the main knob for whole-face jitter. Higher = calmer, 0 = off', interactive=True)
 
                 with gr.Accordion(label="Expression Restorer", open=True):
                     # ER controls + tuning merged into one group (was "Expression"
@@ -197,6 +198,7 @@ def faceswap_tab():
         _c.change(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_c], outputs=[])
     _fs_sliders = [
         (fs_lmk_smooth_str, 'landmark_smoothing_strength'),
+        (fs_lmk_deadzone, 'landmark_smoothing_deadzone'),
         (fs_lmk_gate_thr, 'landmark_sanity_threshold'),
         (fs_es, 'expression_smoothing_strength'),
         (fs_expr_power, 'expression_power'),
@@ -210,7 +212,13 @@ def faceswap_tab():
     previewinputs = [ui.globals.ui_selected_swap_model, preview_frame_num, bt_destfiles, fake_preview, ui.globals.ui_selected_enhancer, selected_face_detection,
                         max_face_distance, ui.globals.ui_blend_ratio, selected_mask_engine, clip_text, no_face_action, vr_mode, autorotate, maskimage, chk_showmaskoffsets, chk_restoreoriginalmouth, chk_restoreoriginaleyes, num_swap_steps, ui.globals.ui_upscale]
     previewoutputs = [previewimage, maskimage, preview_frame_num] 
-    input_faces.select(on_select_input_face, None, None).success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
+    # #1 FIX: source-face change was unreliable. on_select_input_face only sets a
+    # global and returns nothing, so the chained .success() (which only runs if
+    # the trigger produced an output change) frequently didn't fire -> the swap
+    # preview kept showing the OLD source face until some other event refreshed
+    # it. .then() runs unconditionally after the select, so the preview always
+    # re-renders with the newly selected source face.
+    input_faces.select(on_select_input_face, None, None).then(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="once", concurrency_limit=1, concurrency_id="preview")
     
     bt_remove_selected_input_face.click(fn=remove_selected_input_face, outputs=[input_faces])
     bt_srcfiles.change(fn=on_srcfile_changed, show_progress='full', inputs=bt_srcfiles, outputs=[dynamic_face_selection, face_selection, input_faces, bt_srcfiles])
@@ -227,8 +235,8 @@ def faceswap_tab():
     bt_remove_selected_target_face.click(fn=remove_selected_target_face, outputs=[target_faces])
 
     forced_fps.change(fn=on_fps_changed, inputs=[forced_fps], show_progress='hidden')
-    bt_destfiles.change(fn=on_destfiles_changed, inputs=[bt_destfiles], outputs=[preview_frame_num, text_frame_clip], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden')
-    bt_destfiles.select(fn=on_destfiles_selected, outputs=[preview_frame_num, text_frame_clip, forced_fps], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden')
+    bt_destfiles.change(fn=on_destfiles_changed, inputs=[bt_destfiles], outputs=[preview_frame_num, text_frame_clip], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="once", concurrency_limit=1, concurrency_id="preview")
+    bt_destfiles.select(fn=on_destfiles_selected, outputs=[preview_frame_num, text_frame_clip, forced_fps], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="once", concurrency_limit=1, concurrency_id="preview")
     bt_destfiles.clear(fn=on_clear_destfiles, outputs=[target_faces, selected_face_detection])
     resultfiles.select(fn=on_resultfiles_selected, inputs=[resultfiles], outputs=[resultimage, resultvideo])
 
@@ -261,10 +269,10 @@ def faceswap_tab():
     # responsive even while the queue is busy.
     bt_stop.click(fn=stop_swap, outputs=[bt_start, bt_stop], queue=False)
 
-    bt_refresh_preview.click(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)            
+    bt_refresh_preview.click(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="once", concurrency_limit=1, concurrency_id="preview")            
     bt_toggle_masking.click(fn=on_toggle_masking, inputs=[previewimage, maskimage], outputs=[previewimage, maskimage])            
-    fake_preview.change(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs)
-    preview_frame_num.release(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', )
+    fake_preview.change(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="once", concurrency_limit=1, concurrency_id="preview")
+    preview_frame_num.release(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="once", concurrency_limit=1, concurrency_id="preview")
     bt_use_face_from_preview.click(fn=on_use_face_from_selected, show_progress='full', inputs=[bt_destfiles, preview_frame_num], outputs=[dynamic_face_selection, face_selection, target_faces, selected_face_detection])
     set_frame_start.click(fn=on_set_frame, inputs=[set_frame_start, preview_frame_num], outputs=[text_frame_clip])
     set_frame_end.click(fn=on_set_frame, inputs=[set_frame_end, preview_frame_num], outputs=[text_frame_clip])

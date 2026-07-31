@@ -135,10 +135,18 @@ class ProcessMgr():
         # micro-jitter on footage whose alignment was already steady (user
         # confirmed A/B). Landmark smoothing above is the only temporal filter.
 
-        roop.globals.g_desired_face_analysis=["landmark_3d_68", "landmark_2d_106","detection","recognition"]
-        if options.swap_mode == "all_female" or options.swap_mode == "all_male":
-            roop.globals.g_desired_face_analysis.append("genderage")
-        elif options.swap_mode == "all_random":
+        # #2 FIX: keep the face-analysis module set CONSTANT across every swap
+        # mode. Previously "all_female"/"all_male" appended 'genderage', which
+        # changed g_desired_face_analysis and forced get_face_analyser() to
+        # REBUILD buffalo_l with a different allowed_modules set. A different
+        # module set yields subtly different landmark_2d_106 for the same face,
+        # and since that landmark drives the Expression Restorer, the SAME ER
+        # strength produced a visibly different (often stronger) result in
+        # gender modes than in "selected"/"all". Including 'genderage' always
+        # (it's cheap) makes the analyser identical in every mode, so ER strength
+        # is now consistent and the analyser is no longer rebuilt on mode switch.
+        roop.globals.g_desired_face_analysis = ["landmark_3d_68", "landmark_2d_106", "detection", "recognition", "genderage"]
+        if options.swap_mode == "all_random":
             # don't modify original list
             self.input_face_datas = input_faces.copy()
             shuffle_array(self.input_face_datas)
