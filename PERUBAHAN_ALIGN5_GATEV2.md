@@ -69,3 +69,30 @@ Validasi pada kelas yang dikirim (bukan salinan): gate fallback 3% (vs 80% lama)
 6 flips, spike tertangkap; align5 wobble steady -67%, pan lag 1.6px; integrasi
 process_face x12 OK; smoothing dimatikan otomatis untuk batch gambar
 (video_mode=False).
+
+## HOTFIX 2 — threshold RANSAC saya sendiri menimbulkan kedip baru
+Dari dua run probe user yang hasilnya sedikit BERBEDA, saya menguji stabilitas
+himpunan inlier RANSAC. Hasil: dengan thr = 0.05*crop (12.8px pada 256), satu
+titik yang duduk dekat ambang KELUAR-MASUK himpunan inlier pada ~34% frame ->
+fit berganti antara 4 dan 5 korespondensi -> lompatan diskrit di M tiap kali.
+Terukur: lompatan sudut antar-frame 5.92px (thr>=0.08) vs 9.16px (thr 0.05) --
+55% LEBIH BURUK. Saya menukar penanganan outlier yang jarang dengan kedip di
+sepertiga frame. Salah.
+FIX: thr = 0.08*image_size -> 0% inlier flipping, lompatan kembali 5.92px, dan
+tetap menolak outlier jauh lebih baik daripada thr=100 lama.
+
+## Status gate v2: BERHASIL (dari probe user)
+  gate v2: fallback 0/200 (0.0%), state flips 0, learned baseline 0.07
+Bandingkan disagreement mentah yang di atas threshold lama: 62/200 (31%).
+Artinya offset sistematis 2dfan4-vs-kps kini dikenali sebagai NORMAL (baseline
+0.07 dipelajari), bukan dianggap rusak -> tidak ada lagi pergantian basis
+alignment per frame. Sumber "kedip di tempat yang sama" itu sudah hilang.
+
+## Catatan variabilitas probe (pertanyaan user)
+bbox_raw & kps_raw IDENTIK antar run (3.520 / 3.889) -> deteksi SCRFD
+deterministik. lm68_raw sedikit berbeda (2.377 vs 2.381) -> sesi 2dfan4 dengan
+cudnn_conv_algo_search=EXHAUSTIVE memilih algoritma konvolusi yang bisa berbeda
+antar proses, memberi selisih floating-point kecil. Selisih kecil itu lalu
+diperkuat ~7x oleh estimate() menjadi ~1px perbedaan di M_raw. M_pipeline justru
+paling stabil antar run (10.356 vs 10.397) -- itu angka yang layak dipakai
+sebagai pembanding.

@@ -422,15 +422,21 @@ def estimate_norm_robust(lmk, image_size=128):
     NOTHING, so one bad landmark (exactly what happens at non-frontal poses,
     where a keypoint gets occluded or foreshortened) dragged the whole
     alignment and showed up as swap jitter. Measured on a 256 crop:
-        thr=100 -> a 40px-off landmark moves the crop centre 6.93px
-        thr=13  -> the same landmark moves it 1.94px (3.6x better)
-    with normal-noise jitter essentially unchanged (0.518 -> 0.558px) and never
-    fewer than 4 inliers (so it can't collapse onto a degenerate 2-point fit).
-    0.05 * image_size was the sweet spot across a 0.03-0.39 sweep.
+        thr=100        -> a 40px-off landmark moves the crop centre 6.93px
+        thr=0.08*size  -> the same landmark moves it 2.96px (2.3x better)
+    while keeping the inlier set stable frame-to-frame (see the note below on
+    why 0.05 was wrong) and never fewer than 4 inliers.
     """
     dst = _arcface_dst_for_size(image_size)
     src = np.asarray(lmk, dtype=np.float32).reshape(5, 2)
-    thr = max(4.0, float(image_size) * 0.05)
+    # 0.08 (not 0.05): at 0.05 a point sitting near the threshold flips IN and OUT
+    # of the inlier set on ~34% of frames, so the fit alternates between 4 and 5
+    # correspondences -> a discrete jump in M every time. Measured frame-to-frame
+    # corner jump: 5.92px at 0.08+ vs 9.16px at 0.05 (55% WORSE). 0.08 keeps the
+    # inlier set stable on normal footage (0% flips) while still rejecting a
+    # genuinely wild landmark (40px outlier: 2.96px vs 6.93px with the old flat
+    # 100px threshold).
+    thr = max(4.0, float(image_size) * 0.08)
     M, _ = cv2.estimateAffinePartial2D(
         src, dst, method=cv2.RANSAC, ransacReprojThreshold=thr,
         maxIters=2000, confidence=0.995, refineIters=10
