@@ -28,6 +28,7 @@ from roop.face_util import (get_all_faces_multi, landmark_68_to_5,
                             align_crop, align_crop_robust)
 from roop.landmark68 import refine_faces_landmark68
 from roop.face_stabilizer import LandmarkStabilizer
+from roop.align_conditioner import Align5Conditioner
 
 
 def largest(faces):
@@ -92,11 +93,18 @@ def main():
     fc = np.array([[0, 0], [sz, 0], [0, sz], [sz, sz], [sz//2, sz//2]], np.float64)
 
     bbox_raw, kps_raw, lm68_raw = [], [], []
-    Mraw_pts, Msm_pts = [], []
+    Mraw_pts, Msm_pts, Mpipe_pts = [], [], []
     gate_trips = 0
 
     st = LandmarkStabilizer(strength=args.strength, deadzone_frac=args.deadzone,
                             motion_frac=args.motion_frac)
+    # The SAME conditioner class process_face uses -> the numbers below measure
+    # the real render path (align5 smoothing + gate v2), not a probe replica.
+    cond = Align5Conditioner(
+        alpha_min=getattr(G, 'align5_alpha_min', 0.12),
+        motion_frac=getattr(G, 'align5_motion_frac', 0.04),
+        gate_thr=getattr(G, 'landmark_sanity_threshold', 0.08),
+        smoothing=True, gate=True)
 
     n = 0
     while n < args.frames:
@@ -141,6 +149,21 @@ def main():
         inv = np.linalg.inv(A)
         Msm_pts.append((fc[:, :2] - b) @ inv.T)
 
+        # FULL render path: stabilizer output -> align5 conditioner -> fit.
+        bb_s = np.asarray(f.bbox, float)
+        fsize_s = max(bb_s[2]-bb_s[0], bb_s[3]-bb_s[1]) + 1e-6
+        pts5, use_lmk = cond.condition(lmk5s, np.asarray(f.kps, float), fsize_s)
+        try:
+            if use_lmk:
+                _, Mp = align_crop_robust(frame, pts5, sz)
+            else:
+                _, Mp = align_crop(frame, np.asarray(f.kps, float), sz)
+        except Exception:
+            _, Mp = align_crop(frame, np.asarray(f.kps, float), sz)
+        A = Mp[:, :2]; b = Mp[:, 2]
+        inv = np.linalg.inv(A)
+        Mpipe_pts.append((fc[:, :2] - b) @ inv.T)
+
         # gate check
         kps5 = kp[:5]
         fsize = max(bb[2]-bb[0], bb[3]-bb[1])+1e-6
@@ -161,14 +184,23 @@ def main():
     print(f"{'lm68_raw':<14}{residual_jitter(lm68_raw):>22.3f}")
     print(f"{'M_raw(paste)':<14}{residual_jitter(Mraw_pts):>22.3f}")
     print(f"{'M_smoothed':<14}{residual_jitter(Msm_pts):>22.3f}")
-    print(f"\ngate tripped on {gate_trips}/{n} frames ({100*gate_trips/n:.1f}%)")
+    print(f"{'M_pipeline':<14}{residual_jitter(Mpipe_pts):>22.3f}   <- the ACTUAL render path (align5 + gate v2)")
+    print(f"\nraw disagreement above the OLD fixed threshold: {gate_trips}/{n} frames "
+          f"({100*gate_trips/n:.1f}%)  [info only]")
+    print(f"gate v2: fallback frames {cond.n_fallback}/{cond.n_frames} "
+          f"({100*cond.n_fallback/max(cond.n_frames,1):.1f}%), state flips {cond.n_flips}, "
+          f"learned baseline {0 if cond.baseline is None else round(cond.baseline,3)}")
     r0 = residual_jitter(Mraw_pts); r1 = residual_jitter(Msm_pts)
     if r0 == r0 and r1 == r1 and r0 > 1e-6:
         print(f"smoothing removes {100*(1-r1/r0):.0f}% of the paste jitter "
               f"({r0:.3f} -> {r1:.3f} px)")
-    print("\nread: whichever RAW stage is high AND stays high at M_smoothed is the "
-          "flicker source. If M_raw is high but M_smoothed is low, smoothing is "
-          "working and the residual you see is elsewhere (enhancer/mask/ER).")
+    r2 = residual_jitter(Mpipe_pts)
+    if r0 == r0 and r2 == r2 and r0 > 1e-6:
+        print(f"full pipeline removes {100*(1-r2/r0):.0f}% of the paste jitter "
+              f"({r0:.3f} -> {r2:.3f} px)")
+    print("\nread: M_pipeline is what the render actually uses. If M_pipeline is "
+          "low but you still see flicker, the source is AFTER alignment "
+          "(enhancer / mask / ER / swap texture).")
 
 
 if __name__ == '__main__':

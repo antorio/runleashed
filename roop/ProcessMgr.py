@@ -130,11 +130,18 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
-        # Per-run state for the 5-point align smoother and the v2 sanity gate
-        # (both live in process_face). Reset here so a new run never inherits the
-        # previous clip's history.
-        self._align5_state = {'prev': None, 'centre': None}
-        self._gate_state = {'baseline': None, 'tripped': False, 'exit_ok': 0}
+        # (re)create the shared align-point conditioner for this run (adaptive
+        # 5-point smoothing + sanity gate v2; see roop/align_conditioner.py).
+        # Created fresh here so a new run never inherits the previous clip's
+        # smoothing history or gate baseline.
+        from roop.align_conditioner import Align5Conditioner
+        self._align5cond = Align5Conditioner(
+            alpha_min=float(getattr(roop.globals, 'align5_alpha_min', 0.12)),
+            motion_frac=float(getattr(roop.globals, 'align5_motion_frac', 0.04)),
+            gate_thr=float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08)),
+            smoothing=bool(getattr(roop.globals, 'align5_smoothing', True)),
+            gate=bool(getattr(roop.globals, 'landmark_sanity_gate', True)),
+            debug=bool(getattr(roop.globals, 'expression_debug', False)))
         # NOTE: the One-Euro smoothing of the alignment matrix M (batch 2/3) was
         # REMOVED entirely: even with a pixel deadband it produced visible
         # micro-jitter on footage whose alignment was already steady (user
@@ -810,86 +817,34 @@ class ProcessMgr():
         if roop.globals.use_landmark_alignment and landmarks68 is not None:
             try:
                 lmk5 = landmark_68_to_5(landmarks68)
-
-                # --- adaptive smoothing of the 5 ALIGNMENT points -------------
-                # The probe showed the flicker is born HERE: landmarks are only
-                # ~2.4px jittery, but estimate() amplifies that ~7x into ~16px of
-                # crop-corner wobble (a tiny rotation/scale error x the ~180px
-                # lever to the crop edge). Smoothing the whole 68/106 set earlier
-                # doesn't catch it because the 5 align points are re-derived AFTER
-                # that and then fed straight to estimate(). So we EMA these 5
-                # points, with an alpha driven by how far the FACE CENTRE moved:
-                # head still -> centre still -> strong smoothing (kills the
-                # wobble); head panning -> centre moves -> alpha->1 (no lag). This
-                # is the same motion-adaptive idea as the landmark stabilizer, but
-                # applied at the exact point where the amplification happens.
-                if (self.video_mode and roop.globals.landmark_smoothing
-                        and getattr(roop.globals, 'align5_smoothing', True)):
-                    bb = np.asarray(target_face.bbox, dtype=np.float32)
-                    fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
-                    centre = lmk5.mean(0)
-                    st = getattr(self, '_align5_state', None)
-                    if st is not None and st['prev'] is not None and st['prev'].shape == lmk5.shape:
-                        centre_motion = float(np.linalg.norm(centre - st['centre']))
-                        # alpha from centre motion, normalised by face size. amin
-                        # is small so a still head gets heavy smoothing; it ramps
-                        # to 1.0 by the time the centre moves ~4% of face size/frame.
-                        amin = float(getattr(roop.globals, 'align5_alpha_min', 0.12))
-                        mfrac = float(getattr(roop.globals, 'align5_motion_frac', 0.04))
-                        alpha = float(np.clip(centre_motion / (mfrac * fsize), amin, 1.0))
-                        lmk5 = (alpha * lmk5 + (1.0 - alpha) * st['prev']).astype(np.float32)
-                    self._align5_state = {'prev': lmk5.copy(), 'centre': lmk5.mean(0)}
-                else:
-                    self._align5_state = {'prev': None, 'centre': None}
-
-                # --- sanity gate v2: anomaly vs adaptive baseline + hysteresis --
-                # The old gate compared the 68->5 vs detector-kps disagreement to
-                # a FIXED threshold. With 2dfan4 the two point sets have a
-                # SYSTEMATIC offset (different point conventions, not an error) of
-                # ~0.09 -> that sits above the old 0.08 threshold, so the gate
-                # tripped on ~1/3 of frames and flip-flopped the alignment basis
-                # between 68->5 and kps -- a discrete per-frame jump that reads as
-                # "flicker in the same spots". v2 learns the NORMAL disagreement
-                # as a baseline and only trips on a real ANOMALY (a spike well
-                # above that baseline), with hysteresis so it can't chatter.
-                if getattr(roop.globals, 'landmark_sanity_gate', True):
-                    kps = getattr(target_face, 'kps', None)
-                    if kps is not None:
-                        kps5 = np.asarray(kps, dtype=np.float32).reshape(-1, 2)[:5]
-                        if kps5.shape == lmk5.shape:
-                            bb = np.asarray(target_face.bbox, dtype=np.float32)
-                            fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
-                            d = np.linalg.norm(lmk5 - kps5, axis=1) / fsize
-                            d_mean = float(d.mean())
-                            thr = float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08))
-                            g = getattr(self, '_gate_state', None) or {'baseline':None,'tripped':False,'exit_ok':0}
-                            self._gate_state = g
-                            if g['baseline'] is None:
-                                g['baseline'] = max(d_mean, 0.01)
-                            base_d = g['baseline']
-                            # enter only on a clear anomaly; leave when back near
-                            # baseline for a few frames (hysteresis).
-                            enter = d_mean > max(thr * 2.0, 2.2 * base_d)
-                            leave = d_mean < max(thr * 0.8, 1.6 * base_d)
-                            if not g['tripped'] and enter:
-                                g['tripped'] = True; g['exit_ok'] = 0
-                            elif g['tripped']:
-                                g['exit_ok'] = g['exit_ok'] + 1 if leave else 0
-                                if g['exit_ok'] >= 5:
-                                    g['tripped'] = False
-                            if not g['tripped']:
-                                # learn baseline only on healthy frames
-                                g['baseline'] = 0.95 * base_d + 0.05 * d_mean
-                                if enter:
-                                    if getattr(roop.globals, 'expression_debug', False):
-                                        print(f"[lmk-gate v2] anomaly mean={d_mean:.3f} "
-                                              f"baseline={base_d:.3f} -> kps alignment")
-                                    raise ValueError('gate anomaly')
-                            else:
-                                if getattr(roop.globals, 'expression_debug', False):
-                                    print(f"[lmk-gate v2] held (mean={d_mean:.3f} baseline={base_d:.3f})")
-                                raise ValueError('gate held')
-                aligned_img, M = align_crop_robust(frame, lmk5, subsample_size)
+                # Shared conditioner (roop/align_conditioner.py): adaptive
+                # smoothing of the 5 align points (the exact spot where landmark
+                # noise gets amplified ~7x into crop-corner wobble) + sanity gate
+                # v2 (anomaly-vs-baseline with hysteresis, so the alignment basis
+                # can't chatter). The SAME class is used by tools_jitter_probe,
+                # so probe numbers always reflect this code path.
+                cond = getattr(self, '_align5cond', None)
+                if cond is None:
+                    from roop.align_conditioner import Align5Conditioner
+                    cond = Align5Conditioner(
+                        alpha_min=float(getattr(roop.globals, 'align5_alpha_min', 0.12)),
+                        motion_frac=float(getattr(roop.globals, 'align5_motion_frac', 0.04)),
+                        gate_thr=float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08)),
+                        smoothing=bool(getattr(roop.globals, 'align5_smoothing', True)) and self.video_mode and roop.globals.landmark_smoothing,
+                        gate=bool(getattr(roop.globals, 'landmark_sanity_gate', True)),
+                        debug=bool(getattr(roop.globals, 'expression_debug', False)))
+                    self._align5cond = cond
+                # smoothing only makes sense across SEQUENTIAL video frames;
+                # for image batches each item is unrelated so pass-through raw.
+                cond.smoothing = (bool(getattr(roop.globals, 'align5_smoothing', True))
+                                  and self.video_mode and roop.globals.landmark_smoothing)
+                bb = np.asarray(target_face.bbox, dtype=np.float32)
+                fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
+                kps = getattr(target_face, 'kps', None)
+                pts5, use_lmk = cond.condition(lmk5, kps, fsize)
+                if not use_lmk:
+                    raise ValueError('gate v2 fallback to detector kps')
+                aligned_img, M = align_crop_robust(frame, pts5, subsample_size)
             except Exception:
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
         else:

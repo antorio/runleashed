@@ -52,3 +52,20 @@ M_smoothed harusnya turun jauh dari 13.04, gate trip dari 31% ke <5%. Lalu rende
 dan lihat: micro-wobble di rahang/garis rambut harusnya jauh berkurang, dan kedip
 "di tempat yang sama" hilang. Kalau masih ada lag saat pan, naikkan
 align5_motion_frac; kalau masih wobble saat diam, turunkan align5_alpha_min.
+
+## HOTFIX (setelah probe run kedua user)
+Probe run kedua menunjukkan angka IDENTIK (62/200 trip, raw sama persis) --
+karena PROBE TIDAK MELEWATI KODE BARU: align5+gate v2 hidup di process_face,
+sedangkan probe menghitung gate & M dengan logika lamanya sendiri. Kesalahan
+saya (tested != shipped).
+FIX STRUKTURAL: logika diekstrak ke kelas bersama `Align5Conditioner`
+(roop/align_conditioner.py) yang dipakai OLEH KEDUANYA -- process_face DAN
+probe. Probe kini melaporkan baris baru:
+    M_pipeline   <- jalur render sebenarnya (align5 + gate v2)
+    gate v2: fallback X%, state flips N, learned baseline B
+dan baris lama "gate tripped" diganti label "[info only]" (statistik mentah di
+atas threshold lama, bukan perilaku app).
+Validasi pada kelas yang dikirim (bukan salinan): gate fallback 3% (vs 80% lama),
+6 flips, spike tertangkap; align5 wobble steady -67%, pan lag 1.6px; integrasi
+process_face x12 OK; smoothing dimatikan otomatis untuk batch gambar
+(video_mode=False).
