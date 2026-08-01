@@ -28,6 +28,11 @@ class Align5Conditioner:
         self.smoothing = bool(smoothing)
         self.gate = bool(gate)
         self.debug = bool(debug)
+        # crossfade speed between the 68->5 basis and the detector-kps basis
+        self.fade_step = 0.25          # 4 frames for a full switch
+        # a centre jump larger than this fraction of face size means "different
+        # face or scene cut" -> drop history instead of blending across it
+        self.discontinuity_frac = 0.5
         self.reset()
 
     def reset(self):
@@ -36,6 +41,8 @@ class Align5Conditioner:
         self.baseline = None
         self.tripped = False
         self._exit_ok = 0
+        self._w = 1.0          # 1.0 = fully on the 68->5 basis, 0.0 = fully kps
+        self.n_resets = 0
         # counters (probe/diagnostics)
         self.n_frames = 0
         self.n_fallback = 0
@@ -57,9 +64,16 @@ class Align5Conditioner:
             centre = lmk5.mean(0)
             if self._prev is not None and self._prev.shape == lmk5.shape:
                 centre_motion = float(np.linalg.norm(centre - self._centre))
-                alpha = float(np.clip(centre_motion / (self.motion_frac * max(face_size, 1e-6)),
-                                      self.alpha_min, 1.0))
-                lmk5 = (alpha * lmk5 + (1.0 - alpha) * self._prev).astype(np.float32)
+                # Scene cut / a different face becoming the target: the previous
+                # points describe something else entirely, so blending with them
+                # would invent positions belonging to NEITHER face. Drop history.
+                if centre_motion > self.discontinuity_frac * max(face_size, 1e-6):
+                    self._prev = None
+                    self.n_resets += 1
+                else:
+                    alpha = float(np.clip(centre_motion / (self.motion_frac * max(face_size, 1e-6)),
+                                          self.alpha_min, 1.0))
+                    lmk5 = (alpha * lmk5 + (1.0 - alpha) * self._prev).astype(np.float32)
             self._prev = lmk5.copy()
             self._centre = lmk5.mean(0)
         else:
@@ -68,8 +82,10 @@ class Align5Conditioner:
 
         # ---- sanity gate v2 (anomaly vs adaptive baseline, with hysteresis) ----
         use_lmk = True
+        kps_arr = None
         if self.gate and kps5 is not None:
             kps5 = np.asarray(kps5, dtype=np.float32).reshape(-1, 2)[:5]
+            kps_arr = kps5
             if kps5.shape == lmk5.shape:
                 d_mean = float((np.linalg.norm(lmk5 - kps5, axis=1) /
                                 max(face_size, 1e-6)).mean())
@@ -99,4 +115,21 @@ class Align5Conditioner:
                     if self.debug:
                         print(f"[lmk-gate v2] fallback (mean={d_mean:.3f} "
                               f"baseline={self.baseline:.3f})")
-        return lmk5, use_lmk
+
+        # ---- CROSSFADE between the two bases (never a hard switch) ----
+        # The 68->5 and detector-kps point sets sit a SYSTEMATIC distance apart
+        # (learned baseline ~0.07 of face size = ~14px on a 200px face), so
+        # switching basis in one frame is a large visible jump -- which is what
+        # the gate's hard fallback was doing on the frames where it fired. Ramp
+        # a weight instead: the alignment walks between the two bases over ~4
+        # frames, so a protective fallback can no longer look like a flicker.
+        target_w = 1.0 if use_lmk else 0.0
+        if self._w != target_w:
+            step = self.fade_step if target_w > self._w else -self.fade_step
+            self._w = float(np.clip(self._w + step, 0.0, 1.0))
+        if kps_arr is not None and kps_arr.shape == lmk5.shape and self._w < 1.0:
+            pts = (self._w * lmk5 + (1.0 - self._w) * kps_arr).astype(np.float32)
+        else:
+            pts = lmk5
+        # Always fit with `pts`; the caller no longer needs a separate kps path.
+        return pts, True

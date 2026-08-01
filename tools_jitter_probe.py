@@ -37,6 +37,17 @@ def largest(faces):
     return max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
 
 
+def flicker(series):
+    """Median frame-to-frame change: the actual 'does it visibly pop' metric.
+    Unlike the moving-average residual it is not inflated by scene cuts or fast
+    pans (those are a few big frames; the median ignores them)."""
+    a = np.asarray(series, dtype=np.float64)
+    if len(a) < 3:
+        return float('nan')
+    d = np.abs(np.diff(a.reshape(len(a), -1), axis=0)).max(1)
+    return float(np.median(d))
+
+
 def residual_jitter(series, win=5):
     """Std of (signal - moving_average): removes real motion, keeps flicker.
     Works for any per-frame shape: (4,) bboxes, (5,2) kps, (68,2) landmarks."""
@@ -185,11 +196,19 @@ def main():
     print(f"{'M_raw(paste)':<14}{residual_jitter(Mraw_pts):>22.3f}")
     print(f"{'M_smoothed':<14}{residual_jitter(Msm_pts):>22.3f}")
     print(f"{'M_pipeline':<14}{residual_jitter(Mpipe_pts):>22.3f}   <- the ACTUAL render path (align5 + gate v2)")
+    print(f"\nFLICKER (median frame-to-frame jump, px) -- the metric that matches "
+          f"what you SEE:")
+    print(f"{'  M_raw':<14}{flicker(Mraw_pts):>22.3f}")
+    print(f"{'  M_pipeline':<14}{flicker(Mpipe_pts):>22.3f}")
+    fr, fp = flicker(Mraw_pts), flicker(Mpipe_pts)
+    if fr == fr and fp == fp and fr > 1e-9:
+        print(f"  -> pipeline removes {100*(1-fp/fr):.0f}% of the visible flicker")
     print(f"\nraw disagreement above the OLD fixed threshold: {gate_trips}/{n} frames "
           f"({100*gate_trips/n:.1f}%)  [info only]")
     print(f"gate v2: fallback frames {cond.n_fallback}/{cond.n_frames} "
           f"({100*cond.n_fallback/max(cond.n_frames,1):.1f}%), state flips {cond.n_flips}, "
-          f"learned baseline {0 if cond.baseline is None else round(cond.baseline,3)}")
+          f"learned baseline {0 if cond.baseline is None else round(cond.baseline,3)}, "
+          f"track resets (cuts/face switches) {cond.n_resets}")
     r0 = residual_jitter(Mraw_pts); r1 = residual_jitter(Msm_pts)
     if r0 == r0 and r1 == r1 and r0 > 1e-6:
         print(f"smoothing removes {100*(1-r1/r0):.0f}% of the paste jitter "

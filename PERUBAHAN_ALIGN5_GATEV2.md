@@ -96,3 +96,30 @@ antar proses, memberi selisih floating-point kecil. Selisih kecil itu lalu
 diperkuat ~7x oleh estimate() menjadi ~1px perbedaan di M_raw. M_pipeline justru
 paling stabil antar run (10.356 vs 10.397) -- itu angka yang layak dipakai
 sebagai pembanding.
+
+## HOTFIX 3 — regresi ditemukan lewat run 1000 frame user
+Probe 1000 frame: M_pipeline 119.5 vs M_raw 50.0 -> pipeline saya 139% LEBIH
+BURUK. Baris gate menjelaskan: fallback 67/1000, flips 9. Baseline terpelajar
+0.07 berarti basis 68->5 dan basis kps berjarak SISTEMATIS ~14px pada wajah
+200px -- jadi tiap pergantian basis = lompatan besar. Di klip 200 frame fallback
+0% sehingga tak terlihat; di 1000 frame muncul.
+Akar: saya merancang CROSSFADE di simulasi awal tapi TIDAK mengimplementasikannya
+-- yang masuk ke kode hanya switch boolean keras.
+FIX:
+ 1. CROSSFADE: bobot berjalan 0.25/frame antara kedua basis, jadi fallback
+    protektif tidak pernah tampak sebagai kedip. condition() kini SELALU
+    mengembalikan satu himpunan titik siap-fit (tak ada lagi cabang keras).
+ 2. RESET DISKONTINUITAS: bila pusat wajah melompat > 0.5x ukuran wajah (scene
+    cut / wajah target berganti orang), history dibuang alih-alih di-blend --
+    blending dua wajah berbeda menghasilkan posisi yang bukan milik keduanya.
+Terukur: residual raw 3.95 -> pipeline 2.50; LOMPATAN ANTAR-FRAME 6.15 -> 1.09px
+(-82%); pipeline tidak pernah lebih buruk dari raw; scene cut ter-reset (deviasi
+<1px setelah cut).
+
+## Metrik baru di probe: FLICKER
+residual_jitter memakai moving-average 5 frame -> pada klip dengan scene cut /
+pan cepat, sisa gerak NYATA ikut terhitung (itu sebabnya angka 1000-frame
+melonjak ke 40-50px: bbox_raw 41.9 menunjukkan klip itu penuh gerak/cut, bukan
+jitter). Ditambahkan metrik FLICKER = median lompatan antar-frame, yang kebal
+terhadap cut & pan dan paling cocok dengan apa yang MATA lihat. Bandingkan
+baris M_raw vs M_pipeline pada blok FLICKER.
