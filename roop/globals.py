@@ -82,6 +82,13 @@ landmark_smoothing_strength = 0.7
 # ~400px face is ~2.4px and cuts still-head jitter ~60% while barely affecting real
 # motion. 0 disables it. Tune via the "Landmark dead-zone" slider.
 landmark_smoothing_deadzone = 0.012
+# Adaptive smoothing of the 5 alignment points (video). This is where landmark
+# jitter gets amplified ~7x into crop-corner wobble, so smoothing here is the
+# main lever against whole-face swap jitter. alpha is driven by face-centre
+# motion so a still head is smoothed hard while a panning head has no lag.
+align5_smoothing = True
+align5_alpha_min = 0.12
+align5_motion_frac = 0.04
 force_landmark_smoothing = False
 
 # Landmark sanity gate: before using the 68->5 derived points for alignment,
