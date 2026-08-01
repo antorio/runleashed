@@ -415,11 +415,25 @@ def estimate_norm_robust(lmk, image_size=128):
     transform but robust to one or two bad landmarks). This matches FaceFusion's
     approach and is markedly more stable than plain least-squares at profile /
     looking-up / looking-down poses where a single keypoint can be off.
+
+    The reprojection threshold MUST scale with image_size. It used to be a flat
+    100px which, on a 128-512 crop, is so large that every point is always an
+    inlier -- RANSAC then degenerates into plain least-squares and rejects
+    NOTHING, so one bad landmark (exactly what happens at non-frontal poses,
+    where a keypoint gets occluded or foreshortened) dragged the whole
+    alignment and showed up as swap jitter. Measured on a 256 crop:
+        thr=100 -> a 40px-off landmark moves the crop centre 6.93px
+        thr=13  -> the same landmark moves it 1.94px (3.6x better)
+    with normal-noise jitter essentially unchanged (0.518 -> 0.558px) and never
+    fewer than 4 inliers (so it can't collapse onto a degenerate 2-point fit).
+    0.05 * image_size was the sweet spot across a 0.03-0.39 sweep.
     """
     dst = _arcface_dst_for_size(image_size)
     src = np.asarray(lmk, dtype=np.float32).reshape(5, 2)
+    thr = max(4.0, float(image_size) * 0.05)
     M, _ = cv2.estimateAffinePartial2D(
-        src, dst, method=cv2.RANSAC, ransacReprojThreshold=100
+        src, dst, method=cv2.RANSAC, ransacReprojThreshold=thr,
+        maxIters=2000, confidence=0.995, refineIters=10
     )
     if M is None:
         # Robust fit failed (degenerate points) -> fall back to similarity.

@@ -565,9 +565,13 @@ class ProcessMgr():
                     print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
                 return num_faces_found, frame
 
-            refine_faces_landmark68(frame, [face])
+            # bbox is smoothed BEFORE the landmarker runs (2dfan4 crops straight
+            # from the bbox, so a jittery bbox becomes jittery landmarks), then
+            # the landmarks themselves are smoothed. See LandmarkStabilizer.
             if smoothing_on:
-                self.stabilizer.stabilize([face])
+                self.stabilizer.stabilize([face], refine_fn=lambda: refine_faces_landmark68(frame, [face]))
+            else:
+                refine_faces_landmark68(frame, [face])
 
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
@@ -582,9 +586,11 @@ class ProcessMgr():
             if faces is None:
                 return num_faces_found, frame
 
-            refine_faces_landmark68(frame, faces)
+            # same ordering as above: stable bbox -> landmarker -> stable landmarks
             if smoothing_on:
-                self.stabilizer.stabilize(faces)
+                self.stabilizer.stabilize(faces, refine_fn=lambda: refine_faces_landmark68(frame, faces))
+            else:
+                refine_faces_landmark68(frame, faces)
             if self.options.swap_mode == "all":
                 for face in faces:
                     num_faces_found += 1
