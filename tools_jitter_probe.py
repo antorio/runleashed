@@ -37,26 +37,18 @@ def largest(faces):
 
 
 def residual_jitter(series, win=5):
-    """Std of (signal - moving_average): removes real motion, keeps flicker."""
+    """Std of (signal - moving_average): removes real motion, keeps flicker.
+    Works for any per-frame shape: (4,) bboxes, (5,2) kps, (68,2) landmarks."""
     a = np.asarray(series, dtype=np.float64)
-    if len(a) < win+2:
+    if len(a) < win + 2:
         return float('nan')
-    k = np.ones(win)/win
-    # pad-reflect moving average along axis 0
-    pad = win//2
-    ap = np.pad(a, [(pad, pad)] + [(0, 0)]*(a.ndim-1), mode='edge')
-    ma = np.stack([np.convolve(ap[..., i].reshape(len(ap), -1)[:, j], k, 'valid')
-                   for i in range(1) for j in range(a.reshape(len(a), -1).shape[1])], axis=-1)
-    ma = ma.reshape(a.shape)
-    resid = a[:len(ma)] - ma
-    # mean over points, of per-coordinate std over time
-    return float(resid.reshape(len(resid), -1).std(0).mean())
-
-
-def M_centre(M):
-    c = np.array([0., 0., 1.])  # crop origin displacement is enough for relative jitter
-    # use face-centre in frame space instead:
-    return None
+    flat = a.reshape(len(a), -1)
+    k = np.ones(win) / win
+    pad = win // 2
+    fp = np.pad(flat, ((pad, pad), (0, 0)), mode='edge')
+    ma = np.stack([np.convolve(fp[:, j], k, 'valid') for j in range(flat.shape[1])], axis=1)
+    resid = flat - ma[:len(flat)]
+    return float(resid.std(0).mean())
 
 
 def main():
@@ -73,6 +65,27 @@ def main():
     G.use_hi_landmarker = args.hi_landmarker
     G.use_landmark_alignment = True
     G.landmark_sanity_gate = True
+
+    # Use the GPU when available (a CPU run is fine, just slow).
+    try:
+        import onnxruntime as ort
+        if 'CUDAExecutionProvider' in ort.get_available_providers():
+            G.execution_providers = ['CUDAExecutionProvider']
+    except Exception:
+        pass
+
+    # --hi-landmarker must actually test 2dfan4: fetch it from the HF repo if
+    # this session doesn't have it yet (the probe doesn't run pre_check).
+    if args.hi_landmarker:
+        import shutil as _sh
+        import roop.utilities as _util
+        mdir = _util.resolve_relative_path('../models')
+        p2 = os.path.join(mdir, '2dfan4.onnx')
+        if not os.path.exists(p2):
+            print('[probe] 2dfan4.onnx missing -> fetching from antorio/runleashed-models ...')
+            from huggingface_hub import hf_hub_download
+            os.makedirs(mdir, exist_ok=True)
+            _sh.copyfile(hf_hub_download(repo_id='antorio/runleashed-models', filename='2dfan4.onnx'), p2)
 
     cap = cv2.VideoCapture(args.video)
     sz = args.size
