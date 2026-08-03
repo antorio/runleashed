@@ -130,33 +130,21 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
-        # (re)create the shared align-point conditioner for this run (adaptive
-        # 5-point smoothing + sanity gate v2; see roop/align_conditioner.py).
-        # Created fresh here so a new run never inherits the previous clip's
-        # smoothing history or gate baseline.
-        from roop.align_conditioner import Align5Conditioner
-        self._align5cond = Align5Conditioner(
-            alpha_min=float(getattr(roop.globals, 'align5_alpha_min', 0.12)),
-            motion_frac=float(getattr(roop.globals, 'align5_motion_frac', 0.04)),
-            gate_thr=float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08)),
-            smoothing=bool(getattr(roop.globals, 'align5_smoothing', True)),
-            gate=bool(getattr(roop.globals, 'landmark_sanity_gate', True)),
-            debug=bool(getattr(roop.globals, 'expression_debug', False)))
         # NOTE: the One-Euro smoothing of the alignment matrix M (batch 2/3) was
         # REMOVED entirely: even with a pixel deadband it produced visible
         # micro-jitter on footage whose alignment was already steady (user
         # confirmed A/B). Landmark smoothing above is the only temporal filter.
 
-        # #2 FIX: keep the face-analysis module set CONSTANT across every swap
-        # mode. Previously "all_female"/"all_male" appended 'genderage', which
-        # changed g_desired_face_analysis and forced get_face_analyser() to
-        # REBUILD buffalo_l with a different allowed_modules set. A different
-        # module set yields subtly different landmark_2d_106 for the same face,
-        # and since that landmark drives the Expression Restorer, the SAME ER
-        # strength produced a visibly different (often stronger) result in
-        # gender modes than in "selected"/"all". Including 'genderage' always
-        # (it's cheap) makes the analyser identical in every mode, so ER strength
-        # is now consistent and the analyser is no longer rebuilt on mode switch.
+        # Keep the face-analysis module set CONSTANT across every swap mode.
+        # Previously "all_female"/"all_male" appended 'genderage', which changed
+        # g_desired_face_analysis and forced get_face_analyser() to REBUILD
+        # buffalo_l with a different allowed_modules set. A different module set
+        # yields subtly different landmark_2d_106 for the same face, and since
+        # that landmark drives the Expression Restorer, the SAME ER strength
+        # produced a visibly different result in gender modes than in
+        # "selected"/"all". Including 'genderage' always (it's cheap) makes the
+        # analyser identical in every mode, so one ER strength value now behaves
+        # the same whichever detection mode you pick.
         roop.globals.g_desired_face_analysis = ["landmark_3d_68", "landmark_2d_106", "detection", "recognition", "genderage"]
         if options.swap_mode == "all_random":
             # don't modify original list
@@ -577,13 +565,9 @@ class ProcessMgr():
                     print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
                 return num_faces_found, frame
 
-            # bbox is smoothed BEFORE the landmarker runs (2dfan4 crops straight
-            # from the bbox, so a jittery bbox becomes jittery landmarks), then
-            # the landmarks themselves are smoothed. See LandmarkStabilizer.
+            refine_faces_landmark68(frame, [face])
             if smoothing_on:
-                self.stabilizer.stabilize([face], refine_fn=lambda: refine_faces_landmark68(frame, [face]))
-            else:
-                refine_faces_landmark68(frame, [face])
+                self.stabilizer.stabilize([face])
 
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
@@ -598,11 +582,9 @@ class ProcessMgr():
             if faces is None:
                 return num_faces_found, frame
 
-            # same ordering as above: stable bbox -> landmarker -> stable landmarks
+            refine_faces_landmark68(frame, faces)
             if smoothing_on:
-                self.stabilizer.stabilize(faces, refine_fn=lambda: refine_faces_landmark68(frame, faces))
-            else:
-                refine_faces_landmark68(frame, faces)
+                self.stabilizer.stabilize(faces)
             if self.options.swap_mode == "all":
                 for face in faces:
                     num_faces_found += 1
@@ -617,18 +599,15 @@ class ProcessMgr():
                         break
             
             elif self.options.swap_mode == "selected":
-                # The picked source face now ALWAYS applies here, exactly like it
-                # does in "first" / "all" / "all_female" / "all_male".
-                #
-                # Before: when 2+ target faces were marked, this used
-                # process_face(i, ...) -- pairing target face i with INPUT face i
-                # -- and silently ignored the source face you picked in the UI.
-                # That is why changing the source face did nothing in "selected"
-                # mode while it worked in every other mode, and why the same clip
-                # looked completely different between modes: a DIFFERENT SOURCE
-                # FACE was being applied, which reads as "different landmarking".
-                # The 1:1 pairing behaviour still exists as its own mode:
-                # "all_input" (detected face i <- input face i).
+                # The picked source face ALWAYS applies here, exactly like in
+                # "first" / "all" / "all_female" / "all_male".
+                # Before: with 2+ marked target faces this used process_face(i,...)
+                # -- pairing target i with INPUT face i -- and silently ignored the
+                # source face picked in the UI. That is why changing the source did
+                # nothing in "selected" mode while it worked in every other mode,
+                # and why the same clip looked different between modes (a DIFFERENT
+                # SOURCE FACE was applied, which reads as "different landmarking").
+                # The 1:1 pairing behaviour still exists as its own mode: all_input.
                 num_targetfaces = len(self.target_face_datas)
                 idx = self.options.selected_index
                 if idx >= len(self.input_face_datas):
@@ -637,13 +616,13 @@ class ProcessMgr():
                 for tf in self.target_face_datas:
                     for face in faces:
                         if any(face is s for s in swapped_faces):
-                            continue    # don't swap the same face twice
+                            continue    # never swap the same detected face twice
                         if compute_cosine_distance(tf.embedding, face.embedding) <= self.options.face_distance_threshold:
                             if len(self.input_face_datas) > 0:
                                 temp_frame = self.process_face(idx, face, temp_frame)
                                 swapped_faces.append(face)
                                 num_faces_found += 1
-                            break       # this target is handled, go to the next
+                            break       # this target handled, move to the next
                     if not roop.globals.vr_mode and num_faces_found == num_targetfaces:
                         break
             elif self.options.swap_mode == "all_female" or self.options.swap_mode == "all_male":
@@ -817,34 +796,36 @@ class ProcessMgr():
         if roop.globals.use_landmark_alignment and landmarks68 is not None:
             try:
                 lmk5 = landmark_68_to_5(landmarks68)
-                # Shared conditioner (roop/align_conditioner.py): adaptive
-                # smoothing of the 5 align points (the exact spot where landmark
-                # noise gets amplified ~7x into crop-corner wobble) + sanity gate
-                # v2 (anomaly-vs-baseline with hysteresis, so the alignment basis
-                # can't chatter). The SAME class is used by tools_jitter_probe,
-                # so probe numbers always reflect this code path.
-                cond = getattr(self, '_align5cond', None)
-                if cond is None:
-                    from roop.align_conditioner import Align5Conditioner
-                    cond = Align5Conditioner(
-                        alpha_min=float(getattr(roop.globals, 'align5_alpha_min', 0.12)),
-                        motion_frac=float(getattr(roop.globals, 'align5_motion_frac', 0.04)),
-                        gate_thr=float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08)),
-                        smoothing=bool(getattr(roop.globals, 'align5_smoothing', True)) and self.video_mode and roop.globals.landmark_smoothing,
-                        gate=bool(getattr(roop.globals, 'landmark_sanity_gate', True)),
-                        debug=bool(getattr(roop.globals, 'expression_debug', False)))
-                    self._align5cond = cond
-                # smoothing only makes sense across SEQUENTIAL video frames;
-                # for image batches each item is unrelated so pass-through raw.
-                cond.smoothing = (bool(getattr(roop.globals, 'align5_smoothing', True))
-                                  and self.video_mode and roop.globals.landmark_smoothing)
-                bb = np.asarray(target_face.bbox, dtype=np.float32)
-                fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
-                kps = getattr(target_face, 'kps', None)
-                pts5, use_lmk = cond.condition(lmk5, kps, fsize)
-                if not use_lmk:
-                    raise ValueError('gate v2 fallback to detector kps')
-                aligned_img, M = align_crop_robust(frame, pts5, subsample_size)
+                # Landmark sanity gate: on hard frames (extreme pose / blur /
+                # stretched face) the 68pt model fails BEFORE the detector's own
+                # 5 kps do, and a bad 68->5 set produces a wrong affine (the
+                # "misplaced landmark" distortion). Both point sets should mark
+                # the same eyes/nose/mouth, so a large mean disagreement
+                # (relative to face size) = the 68pt landmarks are broken for
+                # this frame -> fall back to the detector kps.
+                if getattr(roop.globals, 'landmark_sanity_gate', True):
+                    kps = getattr(target_face, 'kps', None)
+                    if kps is not None:
+                        kps5 = np.asarray(kps, dtype=np.float32).reshape(-1, 2)[:5]
+                        if kps5.shape == lmk5.shape:
+                            bb = np.asarray(target_face.bbox, dtype=np.float32)
+                            fsize = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
+                            d = np.linalg.norm(lmk5 - kps5, axis=1) / fsize
+                            d_mean = float(d.mean())
+                            d_max = float(d.max())
+                            thr = float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08))
+                            # Two criteria: the mean catches a globally-drifted
+                            # landmark set; the per-point max (2x thr) catches
+                            # the more common failure where ONE keypoint goes
+                            # wild -- the mean over 5 points would dilute that,
+                            # yet a single wild point is enough to skew the fit.
+                            if d_mean > thr or d_max > 2.0 * thr:
+                                if getattr(roop.globals, 'expression_debug', False):
+                                    print(f"[lmk-gate] 68pt/kps disagree mean={d_mean:.3f} "
+                                          f"max={d_max:.3f} (thr {thr:.3f}/{2*thr:.3f}, face {fsize:.0f}px) "
+                                          f"-> detector-kps alignment for this frame")
+                                raise ValueError('landmark sanity gate tripped')
+                aligned_img, M = align_crop_robust(frame, lmk5, subsample_size)
             except Exception:
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
         else:

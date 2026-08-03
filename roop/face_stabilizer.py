@@ -20,11 +20,7 @@ class LandmarkStabilizer:
                  match_frac: float = 0.6, max_age: int = 8,
                  deadzone_frac: float = 0.0):
         # strength in [0,1]; higher = smoother. Maps to a floor on alpha.
-        # The floor used to be clamped at 0.08, which silently capped the slider:
-        # strength 0.92 and 0.98 both produced alpha_min = 0.08, so raising the
-        # slider past ~0.92 did nothing at all. Clamped at 0.02 now, so the top
-        # of the slider really is smoother (0.95 -> 0.05, 0.98 -> 0.02).
-        self.alpha_min = float(np.clip(1.0 - strength, 0.02, 1.0))
+        self.alpha_min = float(np.clip(1.0 - strength, 0.08, 1.0))
         self.motion_frac = motion_frac
         self.match_frac = match_frac
         self.max_age = max_age
@@ -57,61 +53,45 @@ class LandmarkStabilizer:
             v = getattr(face, key, None)
         return None if v is None else np.asarray(v)
 
-    def stabilize(self, faces, refine_fn=None):
-        """Smooth a frame's faces.
-
-        `refine_fn` (optional, no args) is called in the MIDDLE of this method:
-        after the bboxes have been smoothed but before the landmarks are. That
-        ordering matters a lot for the hi-accuracy landmarker (2dfan4): it builds
-        its 256x256 input crop straight from the bbox
-
-            scale = 195 / max(bbox_w, bbox_h)
-            tx,ty = (256 - (bbox_min+bbox_max) * scale) * 0.5
-
-        so a jittering detector bbox makes the crop jitter, and a landmark CNN is
-        not perfectly equivariant to input translation/scale -- slightly
-        different framing gives non-linearly shifted predictions. The detector's
-        bbox wobble therefore gets AMPLIFIED into landmark wobble before any
-        smoothing can act on it (and the bbox is least stable at non-frontal
-        poses, which is exactly where the swap looked most fragile). Feeding the
-        landmarker a temporally smoothed bbox removes that amplification at the
-        source; the landmarks are then smoothed as before.
-        """
+    def stabilize(self, faces):
         if not faces:
-            if refine_fn is not None:
-                refine_fn()
             return faces
         with self._lock:
             for t in self.tracks:
                 t['age'] += 1
             self.tracks = [t for t in self.tracks if t['age'] <= self.max_age]
 
-            # ---- pass 1: match tracks, work out alpha, smooth the bbox -------
-            pending = []
             for f in faces:
                 bbox = np.asarray(f.bbox, dtype=np.float32)
                 size = float(max(bbox[2] - bbox[0], bbox[3] - bbox[1])) + 1e-6
                 center = np.array([(bbox[0] + bbox[2]) * 0.5,
                                    (bbox[1] + bbox[3]) * 0.5], dtype=np.float32)
+
                 kps = self._get(f, 'kps')
+                lm106 = self._get(f, 'landmark_2d_106')
+                lm68 = self._get(f, 'landmark_3d_68')
 
                 t = self._match(center, size)
                 if t is None:
                     self.tracks.append({
                         'center': center, 'size': size, 'age': 0,
-                        'bbox': bbox.copy(),
                         'kps': None if kps is None else kps.copy(),
-                        'lm106': None, 'lm68': None,
+                        'lm106': None if lm106 is None else lm106.copy(),
+                        'lm68': None if lm68 is None else lm68.copy(),
                     })
-                    pending.append((f, None, 1.0))
                     continue
 
-                # adaptive alpha from how far the keypoints moved. kps is NOT
-                # touched by the landmarker, so this is valid to compute now.
-                if kps is not None and t.get('kps') is not None and t['kps'].shape == kps.shape:
+                # adaptive alpha from how far the keypoints moved
+                if kps is not None and t['kps'] is not None and t['kps'].shape == kps.shape:
                     motion = float(np.linalg.norm(kps - t['kps'], axis=1).mean())
                 else:
                     motion = float(np.hypot(*(center - t['center'])))
+                # soft dead-zone. Inside the zone (motion <= dead) the smoothed
+                # landmarks freeze (alpha=0) -> still-head detector wobble is
+                # killed. Just outside, the alpha floor ramps 0 -> alpha_min across
+                # (dead, 2*dead] so slow real motion is picked up without a jump.
+                # deadzone_frac=0 -> dead=0 -> falls straight to the original
+                # clip(motion/(motion_frac*size), alpha_min, 1) formula.
                 dead = self.deadzone_frac * size
                 if dead > 0.0 and motion <= dead:
                     alpha = 0.0
@@ -123,38 +103,6 @@ class LandmarkStabilizer:
                     else:
                         floor = self.alpha_min
                     alpha = float(np.clip(raw, floor, 1.0))
-
-                # smooth the bbox with the same adaptive weight and write it back
-                prev_bb = t.get('bbox')
-                if prev_bb is not None and prev_bb.shape == bbox.shape:
-                    new_bb = (alpha * bbox + (1.0 - alpha) * prev_bb).astype(np.float32)
-                else:
-                    new_bb = bbox
-                t['bbox'] = new_bb.copy()
-                try:
-                    f['bbox'] = new_bb
-                except Exception:
-                    pass
-                pending.append((f, t, alpha))
-
-            # ---- landmarker runs here, on the SMOOTHED bboxes ----------------
-            if refine_fn is not None:
-                refine_fn()
-
-            # ---- pass 2: smooth the landmarks --------------------------------
-            for f, t, alpha in pending:
-                kps = self._get(f, 'kps')
-                lm106 = self._get(f, 'landmark_2d_106')
-                lm68 = self._get(f, 'landmark_3d_68')
-                if t is None:
-                    # brand-new track: seed its landmark history, nothing to blend
-                    for tr in self.tracks:
-                        if tr['age'] == 0 and tr.get('lm68') is None and tr.get('lm106') is None:
-                            tr['kps'] = None if kps is None else kps.copy()
-                            tr['lm106'] = None if lm106 is None else lm106.copy()
-                            tr['lm68'] = None if lm68 is None else lm68.copy()
-                            break
-                    continue
                 beta = 1.0 - alpha
 
                 def smooth(cur, prev):
@@ -170,7 +118,7 @@ class LandmarkStabilizer:
 
                 new_lm68 = lm68
                 if lm68 is not None:
-                    if t.get('lm68') is None or t['lm68'].shape != lm68.shape:
+                    if t['lm68'] is None or t['lm68'].shape != lm68.shape:
                         t['lm68'] = lm68.copy()
                     else:
                         new_lm68 = lm68.copy()
@@ -178,10 +126,7 @@ class LandmarkStabilizer:
                                            beta * t['lm68'][:, :2])
                         t['lm68'] = new_lm68.copy()
 
-                bb = np.asarray(f.bbox, dtype=np.float32)
-                t['center'] = np.array([(bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5], dtype=np.float32)
-                t['size'] = float(max(bb[2] - bb[0], bb[3] - bb[1])) + 1e-6
-                t['age'] = 0
+                t['center'], t['size'], t['age'] = center, size, 0
 
                 # write smoothed landmarks back onto the face object
                 try:
