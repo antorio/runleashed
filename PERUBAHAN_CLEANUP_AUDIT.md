@@ -60,3 +60,50 @@ hilang (guard fallback ke kps). Semua lolos.
 Perilaku render saat toggle ON = persis seperti sebelumnya. Semua keeper tetap:
 selected-mode source face, analyser konstan, refresh preview saat ganti source,
 Restore eyes, model HF, perbaikan auto-stop.
+
+## LANJUTAN — dua temuan yang audit pertama saya LEWATKAN
+
+### Kenapa terlewat (jujur)
+Audit pertama digerakkan skrip: cari fungsi/globals yang TIDAK PERNAH DIRUJUK.
+Itu hanya SATU dimensi. Pemborosan di bawah ini kelas berbeda: kodenya dirujuk,
+dipanggil, lalu hasilnya DIBUANG. Tidak ada grep yang menangkapnya -- hanya
+penalaran aliran data. Saya menjalankan 3 pass alat lalu mengklaim "A sampai Z",
+padahal yang diaudit hanya satu sumbu. Klaim itu berlebihan.
+
+### Temuan 1: 1k3d68 terbuang saat 2dfan4 ON
+2dfan4 MENIMPA landmark_3d_68; satu-satunya yang diambil dari buffalo adalah
+kolom z, dan TIDAK ADA yang membaca z (landmark_68_to_5 pakai [:, :2], stabilizer
+tak menyentuh z). Jadi dengan 2dfan4 ON, 1k3d68 dijalankan tiap wajah tiap frame
+lalu dibuang seluruhnya.
+FIX: "landmark_3d_68" hanya diminta bila alignment ON *dan* 2dfan4 OFF. Kode
+penyalin z disederhanakan jadi nol + komentar jujur.
+Hasil daftar modul:
+  align ON  + 2dfan4 OFF -> [landmark_3d_68, landmark_2d_106, detection, recognition, genderage]
+  align ON  + 2dfan4 ON  -> [landmark_2d_106, detection, recognition, genderage]
+  align OFF              -> [landmark_2d_106, detection, recognition, genderage]
+
+### Temuan 2: sanity gate cacat DESAIN -> DICABUT TOTAL
+User benar: ambang berapa pun tidak menyembuhkan. Mekanisme yang memilih basis
+alignment PER FRAME lewat ambang akan selalu bisa bolak-balik (frame 1 lewat,
+frame 2 tidak, frame 3 lewat) -- dan kedua basis berjarak sistematis, jadi tiap
+perpindahan adalah lompatan. Ambang hanya mengatur SEBERAPA SERING melompat.
+Gate menukar distorsi yang jarang dengan lompatan yang sering.
+Saya sempat menyadari gejalanya (karena itu saya buat crossfade) tapi memilih
+menambal alih-alih menyimpulkan bahwa mekanismenya memang salah.
+FIX: gate DICABUT seluruhnya -- kode di process_face, 2 globals
+(landmark_sanity_gate, landmark_sanity_threshold), dan slider UI-nya. Kini SATU
+basis alignment, konsisten, tanpa perpindahan per frame. Tidak ada swapper lain
+(Rope, FaceFusion, deep-live-cam) yang punya gate semacam ini.
+
+### Trade-off yang saya SEBUTKAN, bukan sembunyikan
+'genderage' tetap selalu diminta walau hanya dipakai mode all_female/all_male.
+Alasannya: daftar modul harus KONSTAN antar mode, kalau tidak analyser di-rebuild
+dan landmark_2d_106 berubah halus -> ER terasa beda antar mode (bug yang sudah
+kita perbaiki). genderage.onnx input 96x96 (jauh lebih ringan dari 1k3d68 192x192),
+jadi ini pertukaran sadar: konsistensi ER dibayar dengan inference sangat kecil.
+Kalau kamu lebih memilih menghematnya, bilang -- tapi ER akan beda lagi antar mode.
+
+### Validasi
+py_compile; audit ulang (fungsi mati 0, globals mati 0); daftar modul diverifikasi
+untuk 3 kombinasi toggle; process_face diuji di 3 skenario (align ON+68, align OFF,
+align ON tanpa 68); konsistensi basis diukur (tak ada perpindahan); build Gradio.

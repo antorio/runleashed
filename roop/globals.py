@@ -67,21 +67,25 @@ landmark_smoothing_strength = 0.7
 landmark_smoothing_deadzone = 0.006
 force_landmark_smoothing = False
 
-# Landmark sanity gate: before using the 68->5 derived points for alignment,
-# check that they agree with the detector's own 5 keypoints (both are free).
-# On hard frames (extreme pose / blur / stretched face) the 68pt model fails
-# FIRST, producing a wrong affine -> the "misplaced landmark" distortion. When
-# the mean disagreement exceeds `threshold` (fraction of the face size) the
-# alignment falls back to the detector kps for that frame. Prints [lmk-gate]
-# on every fallback when expression_debug is on.
-landmark_sanity_gate = True
-landmark_sanity_threshold = 0.08
 
 # High-accuracy 68-point landmarker (FaceFusion 2dfan4, ONNX, MIT). When ON and
 # the model file is present, its 68 landmarks replace buffalo_l's landmark_3d_68
 # (used for landmark alignment only). 5-point arcface kps and
 # landmark_2d_106 are unchanged. Put 2dfan4.onnx in ./models/ or set the path.
 use_hi_landmarker = False
+
+# Landmark sanity gate (opt-in). Compares the 5 points derived from the 68
+# landmarks against the detector's own 5 kps; if they disagree by more than
+# `landmark_sanity_threshold` the 68pt set is treated as broken for that frame
+# and the alignment falls back to the kps. OFF by default: the two point sets
+# differ systematically, so a low threshold makes the gate fire on ordinary
+# frames and the alignment flips basis, which flickers. Only useful if your
+# footage has genuine landmark blow-ups at hard poses.
+landmark_sanity_gate = False
+# Threshold as a FRACTION OF FACE SIZE (the larger side of the face bbox), not
+# pixels. 0.10 on a 200px face = 20px of average disagreement. The per-point
+# limit is twice this value.
+landmark_sanity_threshold = 0.20
 hi_landmarker_model_path = ''
 hi_landmarker_debug = False
 

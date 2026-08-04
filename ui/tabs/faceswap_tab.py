@@ -135,7 +135,8 @@ def faceswap_tab():
                 with gr.Accordion(label="Alignment & stabilization", open=False):
                     fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="On = align from the 68-point landmarks. Off = align from the detector's 5 keypoints (coarser but steadier at hard poses, and skips the 68pt model entirely).", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
                     fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model. Only has an effect while landmark alignment is on.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_gate_thr = gr.Slider(0.02, 0.20, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Landmark sanity gate", info='fall back to detector kps when the 68pt landmarks disagree beyond this fraction of face size. Lower = stricter, 0.20 = almost never. Only applies while landmark alignment is on', interactive=True)
+                    fs_lmk_gate = gr.Checkbox(label="Landmark sanity gate", info="Fall back to the detector keypoints on frames where the 68pt landmarks look broken. Off = never checked (no cost, alignment never switches basis).", value=lambda a='landmark_sanity_gate': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_gate_thr = gr.Slider(0.0, 0.50, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Gate threshold", info='disagreement allowed before falling back, as a FRACTION OF FACE SIZE (0.10 on a 200px face = 20px). Lower = fires more often. Only used while the gate is on', interactive=True)
                     fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
                     fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
@@ -181,6 +182,8 @@ def faceswap_tab():
     _fs_toggles = [
         (fs_use_lmk_align, 'use_landmark_alignment'),
         (fs_use_hi_lmk, 'use_hi_landmarker'),
+        (fs_lmk_gate, 'landmark_sanity_gate'),
+        (fs_lmk_gate_thr, 'landmark_sanity_threshold'),
         (fs_multi_angle, 'multi_angle_detection_mode'),
         (fs_color_transfer, 'use_color_transfer'),
         (fs_mask_after_enh, 'mask_after_enhancer'),
@@ -193,7 +196,6 @@ def faceswap_tab():
     _fs_sliders = [
         (fs_lmk_smooth_str, 'landmark_smoothing_strength'),
         (fs_lmk_deadzone, 'landmark_smoothing_deadzone'),
-        (fs_lmk_gate_thr, 'landmark_sanity_threshold'),
         (fs_es, 'expression_smoothing_strength'),
         (fs_expr_power, 'expression_power'),
     ]

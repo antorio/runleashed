@@ -171,15 +171,12 @@ def refine_faces_landmark68(frame, faces):
             pts, score = lm.detect(frame, bbox)
             if pts is None or pts.shape[0] != 68:
                 continue
-            old = None
-            try:
-                old = np.asarray(f['landmark_3d_68'])
-            except Exception:
-                old = getattr(f, 'landmark_3d_68', None)
-            if old is not None and getattr(old, 'ndim', 0) == 2 and old.shape[1] >= 3:
-                z = np.asarray(old, dtype=np.float32)[:, 2:3]
-            else:
-                z = np.zeros((68, 1), dtype=np.float32)
+            # z is filled with zeros: 2dfan4 is a 2D landmarker, and NOTHING in
+            # the pipeline reads the z column (landmark_68_to_5 takes [:, :2] and
+            # the stabilizer leaves z untouched). buffalo_l's 1k3d68 is no longer
+            # requested at all while 2dfan4 is on, so there is no z to preserve --
+            # keeping the 3-column shape only for compatibility.
+            z = np.zeros((68, 1), dtype=np.float32)
             f['landmark_3d_68'] = np.concatenate([pts.astype(np.float32), z], axis=1)
             if dbg:
                 print(f"[hi-landmarker] refined 68pts (score={score:.2f})")

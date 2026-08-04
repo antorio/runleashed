@@ -134,24 +134,22 @@ class ProcessMgr():
         # micro-jitter on footage whose alignment was already steady (user
         # confirmed A/B). Landmark smoothing above is the only temporal filter.
 
-        # Face-analysis module set. Kept CONSTANT across every swap mode (see
-        # note below), but it DOES follow use_landmark_alignment: the buffalo_l
-        # 68-point model (1k3d68.onnx) runs on every face of every frame, and
-        # after the hull mask was removed the ONLY consumer of those 68 points is
-        # the landmark alignment. So when alignment runs from the detector kps
-        # instead, requesting them is paid-for inference whose result is thrown
-        # away -- we drop the module entirely.
+        # Face-analysis module set. Kept CONSTANT across every swap mode so the
+        # analyser is never rebuilt mid-session (a different module set yields
+        # subtly different landmark_2d_106, which drives the Expression Restorer
+        # and made the same ER strength look different between modes).
         #
-        # Why the set must not vary with swap_mode: "all_female"/"all_male" used
-        # to append 'genderage', which changed the list and forced
-        # get_face_analyser() to REBUILD buffalo_l with different allowed_modules.
-        # A different module set yields subtly different landmark_2d_106 for the
-        # same face, and since that landmark drives the Expression Restorer, the
-        # SAME ER strength looked different in gender modes. 'genderage' is cheap,
-        # so it is always included and one ER value now behaves identically in
-        # every detection mode.
+        # buffalo_l's 68-point model (1k3d68.onnx) is requested ONLY when its
+        # output is actually consumed:
+        #   - alignment off            -> nobody reads the 68 points at all
+        #   - alignment on + 2dfan4 on -> 2dfan4 OVERWRITES them; the only thing
+        #     kept from buffalo was the z column, and NOTHING reads z
+        #     (landmark_68_to_5 uses [:, :2], the stabilizer leaves z untouched).
+        # In both cases running 1k3d68 on every face of every frame is inference
+        # that is paid for and thrown away.
         analysis_modules = ["landmark_2d_106", "detection", "recognition", "genderage"]
-        if getattr(roop.globals, 'use_landmark_alignment', True):
+        if (getattr(roop.globals, 'use_landmark_alignment', True)
+                and not getattr(roop.globals, 'use_hi_landmarker', False)):
             analysis_modules.insert(0, "landmark_3d_68")
         roop.globals.g_desired_face_analysis = analysis_modules
         if options.swap_mode == "all_random":
@@ -788,14 +786,23 @@ class ProcessMgr():
         if roop.globals.use_landmark_alignment and landmarks68 is not None:
             try:
                 lmk5 = landmark_68_to_5(landmarks68)
-                # Landmark sanity gate: on hard frames (extreme pose / blur /
-                # stretched face) the 68pt model fails BEFORE the detector's own
-                # 5 kps do, and a bad 68->5 set produces a wrong affine (the
-                # "misplaced landmark" distortion). Both point sets should mark
-                # the same eyes/nose/mouth, so a large mean disagreement
-                # (relative to face size) = the 68pt landmarks are broken for
-                # this frame -> fall back to the detector kps.
-                if getattr(roop.globals, 'landmark_sanity_gate', True):
+                # Landmark sanity gate -- OPT-IN. When the toggle is off this
+                # whole block is skipped, so nothing is computed and no frame can
+                # ever change alignment basis (zero cost, zero behaviour).
+                #
+                # What it does when on: the 68->5 points and the detector's own 5
+                # kps should mark the same eyes/nose/mouth. A large disagreement
+                # means the 68pt model broke for this frame (extreme pose, blur,
+                # occlusion), so we fall back to the kps for that frame.
+                #
+                # Know the trade-off: the two point sets have a SYSTEMATIC offset
+                # (different models, different definitions), so a threshold that
+                # is too low makes the gate fire on ordinary frames and the
+                # alignment flips between two bases that sit measurably apart --
+                # which is itself a flicker source. Higher = fires only on real
+                # breakage. Set the threshold above your footage's normal
+                # disagreement, or leave the gate off entirely.
+                if getattr(roop.globals, 'landmark_sanity_gate', False):
                     kps = getattr(target_face, 'kps', None)
                     if kps is not None:
                         kps5 = np.asarray(kps, dtype=np.float32).reshape(-1, 2)[:5]
@@ -805,20 +812,18 @@ class ProcessMgr():
                             d = np.linalg.norm(lmk5 - kps5, axis=1) / fsize
                             d_mean = float(d.mean())
                             d_max = float(d.max())
-                            thr = float(getattr(roop.globals, 'landmark_sanity_threshold', 0.08))
-                            # Two criteria: the mean catches a globally-drifted
-                            # landmark set; the per-point max (2x thr) catches
-                            # the more common failure where ONE keypoint goes
-                            # wild -- the mean over 5 points would dilute that,
-                            # yet a single wild point is enough to skew the fit.
+                            thr = float(getattr(roop.globals, 'landmark_sanity_threshold', 0.20))
+                            # mean catches a globally-drifted landmark set; the
+                            # per-point max (2x thr) catches the commoner failure
+                            # where ONE point goes wild and the mean dilutes it.
                             if d_mean > thr or d_max > 2.0 * thr:
                                 if getattr(roop.globals, 'expression_debug', False):
-                                    print(f"[lmk-gate] 68pt/kps disagree mean={d_mean:.3f} "
-                                          f"max={d_max:.3f} (thr {thr:.3f}/{2*thr:.3f}, face {fsize:.0f}px) "
-                                          f"-> detector-kps alignment for this frame")
+                                    print(f"[lmk-gate] disagree mean={d_mean:.3f} max={d_max:.3f} "
+                                          f"(thr {thr:.3f}/{2*thr:.3f}, face {fsize:.0f}px) -> kps alignment")
                                 raise ValueError('landmark sanity gate tripped')
                 aligned_img, M = align_crop_robust(frame, lmk5, subsample_size)
             except Exception:
+                # Gate tripped, or a hard failure (missing / != 68 landmarks).
                 aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
         else:
             aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
