@@ -275,15 +275,6 @@ def clamp_cut_values(startX, endX, startY, endY, image):
 
 
 
-def face_offset_top(face: Face, offset):
-    face["bbox"][1] += offset
-    face["bbox"][3] += offset
-    lm106 = face.landmark_2d_106
-    add = np.full_like(lm106, [0, offset])
-    face["landmark_2d_106"] = lm106 + add
-    return face
-
-
 def resize_image_keep_content(image, new_width=512, new_height=512):
     dim = None
     (h, w) = image.shape[:2]
@@ -323,10 +314,6 @@ def rotate_anticlockwise(frame):
 
 def rotate_clockwise(frame):
     return rotate_image_90(frame, False)
-
-
-def rotate_image_180(image):
-    return np.flip(image, 0)
 
 
 # alignment code from insightface https://github.com/deepinsight/insightface/blob/master/python-package/insightface/utils/face_align.py
@@ -455,21 +442,6 @@ def align_crop_robust(img, landmark5, image_size=128):
     return warped, M
 
 
-def square_crop(im, S):
-    if im.shape[0] > im.shape[1]:
-        height = S
-        width = int(float(im.shape[1]) / im.shape[0] * S)
-        scale = float(S) / im.shape[0]
-    else:
-        width = S
-        height = int(float(im.shape[0]) / im.shape[1] * S)
-        scale = float(S) / im.shape[1]
-    resized_im = cv2.resize(im, (width, height))
-    det_im = np.zeros((S, S, 3), dtype=np.uint8)
-    det_im[: resized_im.shape[0], : resized_im.shape[1], :] = resized_im
-    return det_im, scale
-
-
 def transform(data, center, output_size, scale, rotation):
     scale_ratio = scale
     rot = float(rotation) * np.pi / 180.0
@@ -486,34 +458,6 @@ def transform(data, center, output_size, scale, rotation):
     return cropped, M
 
 
-def trans_points2d(pts, M):
-    pts = np.asarray(pts, dtype=np.float32)
-    M = np.asarray(M, dtype=np.float32)
-    # (N,2) @ (2,2)^T + (2,)  -- vectorized, replaces the per-point Python loop
-    return (pts @ M[:, :2].T + M[:, 2]).astype(np.float32)
-
-
-def trans_points3d(pts, M):
-    scale = np.sqrt(M[0][0] * M[0][0] + M[0][1] * M[0][1])
-    # print(scale)
-    new_pts = np.zeros(shape=pts.shape, dtype=np.float32)
-    for i in range(pts.shape[0]):
-        pt = pts[i]
-        new_pt = np.array([pt[0], pt[1], 1.0], dtype=np.float32)
-        new_pt = np.dot(M, new_pt)
-        # print('new_pt', new_pt.shape, new_pt)
-        new_pts[i][0:2] = new_pt[0:2]
-        new_pts[i][2] = pts[i][2] * scale
-
-    return new_pts
-
-
-def trans_points(pts, M):
-    if pts.shape[1] == 2:
-        return trans_points2d(pts, M)
-    else:
-        return trans_points3d(pts, M)
-    
 def create_blank_image(width, height):
     img = np.zeros((height, width, 4), dtype=np.uint8)
     img[:] = [0,0,0,0]

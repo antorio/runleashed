@@ -7,8 +7,7 @@ import roop.globals
 from roop.face_util import extract_face_images
 from roop.capturer import get_video_frame, get_video_frame_total
 from typing import List, Tuple, Optional
-from roop.typing import Frame, Face, FaceSet
-
+from roop.typing import Frame, Face
 selected_face_index = -1
 thumbs = []
 images = []

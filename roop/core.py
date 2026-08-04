@@ -28,8 +28,7 @@ from roop.face_util import extract_face_images
 from roop.ProcessEntry import ProcessEntry
 from roop.ProcessMgr import ProcessMgr
 from roop.ProcessOptions import ProcessOptions
-from roop.capturer import get_video_frame_total, release_video
-
+from roop.capturer import get_video_frame_total
 
 clip_text = None
 
@@ -76,12 +75,6 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
 
     return list_providers
     
-
-
-def suggest_max_memory() -> int:
-    if platform.system().lower() == 'darwin':
-        return 4
-    return 16
 
 
 def suggest_execution_providers() -> List[str]:
@@ -286,21 +279,6 @@ def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], m
     process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
     batch_process(output_method, files, use_new_method)
     return
-
-def batch_process_with_options(files:list[ProcessEntry], options, progress):
-    global clip_text, process_mgr
-
-    release_resources()
-    limit_resources()
-    if process_mgr is None:
-        process_mgr = ProcessMgr(progress)
-    process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
-    roop.globals.keep_frames = False
-    roop.globals.wait_after_extraction = False
-    roop.globals.skip_audio = False
-    batch_process("Files", files, True)
-
-
 
 def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> None:
     global clip_text, process_mgr

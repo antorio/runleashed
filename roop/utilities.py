@@ -9,7 +9,6 @@ import sys
 import urllib
 import torch
 import gradio
-import tempfile
 import cv2
 import zipfile
 import traceback
@@ -76,25 +75,6 @@ def convert_to_gradio_preview(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
-def sort_filenames_ignore_path(filenames):
-    """Sorts a list of filenames containing a complete path by their filename,
-    while retaining their original path.
-
-    Args:
-      filenames: A list of filenames containing a complete path.
-
-    Returns:
-      A sorted list of filenames containing a complete path.
-    """
-    filename_path_tuples = [
-        (os.path.split(filename)[1], filename) for filename in filenames
-    ]
-    sorted_filename_path_tuples = sorted(filename_path_tuples, key=lambda x: x[0])
-    return [
-        filename_path_tuple[1] for filename_path_tuple in sorted_filename_path_tuples
-    ]
-
-
 def sort_rename_frames(path: str):
     filenames = os.listdir(path)
     filenames.sort()
@@ -125,22 +105,6 @@ def get_temp_directory_path(target_path: str) -> str:
     return os.path.join(target_directory_path, TEMP_DIRECTORY, target_name)
 
 
-def get_temp_output_path(target_path: str) -> str:
-    temp_directory_path = get_temp_directory_path(target_path)
-    return os.path.join(temp_directory_path, TEMP_FILE)
-
-
-def normalize_output_path(source_path: str, target_path: str, output_path: str) -> Any:
-    if source_path and target_path:
-        source_name, _ = os.path.splitext(os.path.basename(source_path))
-        target_name, target_extension = os.path.splitext(os.path.basename(target_path))
-        if os.path.isdir(output_path):
-            return os.path.join(
-                output_path, source_name + "-" + target_name + target_extension
-            )
-    return output_path
-
-
 def get_destfilename_from_path(
     srcfilepath: str, destfilepath: str, extension: str
 ) -> str:
@@ -167,14 +131,6 @@ def replace_template(file_path: str, index: int = 0) -> str:
 def create_temp(target_path: str) -> None:
     temp_directory_path = get_temp_directory_path(target_path)
     Path(temp_directory_path).mkdir(parents=True, exist_ok=True)
-
-
-def move_temp(target_path: str, output_path: str) -> None:
-    temp_output_path = get_temp_output_path(target_path)
-    if os.path.isfile(temp_output_path):
-        if os.path.isfile(output_path):
-            os.remove(output_path)
-        shutil.move(temp_output_path, output_path)
 
 
 def clean_temp(target_path: str) -> None:
@@ -303,18 +259,6 @@ def open_with_default_app(filename:str):
         subprocess.call("cmd.exe /C start".split() + [filename])
     else:  # linux variants
         subprocess.call("xdg-open", filename)
-
-
-def prepare_for_batch(target_files) -> str:
-    print("Preparing temp files")
-    tempfolder = os.path.join(tempfile.gettempdir(), "rooptmp")
-    if os.path.exists(tempfolder):
-        shutil.rmtree(tempfolder)
-    Path(tempfolder).mkdir(parents=True, exist_ok=True)
-    for f in target_files:
-        newname = os.path.basename(f.name)
-        shutil.move(f.name, os.path.join(tempfolder, newname))
-    return tempfolder
 
 
 def zip(files, zipname):

@@ -15,11 +15,9 @@ autorotate_faces = None
 vr_mode = None
 skip_audio = None
 wait_after_extraction = None
-many_faces = None
 use_batch = None
 source_face_index = 0
 target_face_index = 0
-face_position = None
 video_encoder = None
 video_quality = None
 max_memory = None
@@ -39,21 +37,6 @@ default_det_size = True
 # (instead of the detector's raw kps) and fit the warp with a RANSAC affine.
 # This is the main fix for "off" swaps at extreme yaw/pitch angles.
 use_landmark_alignment = True
-# Build the paste-back matte from the face convex hull (follows the face
-# contour) instead of a plain rectangle, removing jaw/neck/background bleed
-# at angled poses. Falls back to the rectangle if landmarks are unavailable.
-use_face_hull_mask = False
-# How far above the eyebrows to extend the hull to cover the forehead,
-# as a fraction of the chin->brow distance.
-face_hull_forehead = 0.6
-# Dilate the hull outward by this fraction of the crop size so the swapped
-# face fully covers the target (compensates the erosion in blur_area). Raise
-# if the swap looks smaller than the target; lower if it bleeds onto the neck.
-face_hull_dilate = 0.10
-# Below this hull-area fraction of the crop, treat the hull as degenerate
-# (profile / looking up) and fall back to the full rectangle matte so the face
-# is never cut in half. 0 disables the guard.
-face_hull_min_area = 0.22
 # Optional Reinhard (LAB) color transfer of the swapped face toward the
 # target region before paste-back. Off by default (inswapper already does
 # reasonable color); enable if source/target lighting differs a lot.
@@ -96,7 +79,7 @@ landmark_sanity_threshold = 0.08
 
 # High-accuracy 68-point landmarker (FaceFusion 2dfan4, ONNX, MIT). When ON and
 # the model file is present, its 68 landmarks replace buffalo_l's landmark_3d_68
-# (used for landmark alignment + occlusion hull mask). 5-point arcface kps and
+# (used for landmark alignment only). 5-point arcface kps and
 # landmark_2d_106 are unchanged. Put 2dfan4.onnx in ./models/ or set the path.
 use_hi_landmarker = False
 hi_landmarker_model_path = ''
@@ -193,15 +176,11 @@ g_current_face_analysis = None
 # processing, so buffalo_l isn't rebuilt on the first swap.
 g_desired_face_analysis = ["landmark_3d_68", "landmark_2d_106", "detection", "recognition", "genderage"]
 
-FACE_ENHANCER = None
 
 INPUT_FACESETS = []
 TARGET_FACES = []
 
 
-IMAGE_CHAIN_PROCESSOR = None
-VIDEO_CHAIN_PROCESSOR = None
-BATCH_IMAGE_CHAIN_PROCESSOR = None
 
 CFG: Settings = None
 

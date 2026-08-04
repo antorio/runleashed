@@ -5,11 +5,10 @@ import psutil
 
 from roop.ProcessOptions import ProcessOptions
 
-from roop.face_util import get_first_face, get_all_faces, get_first_face_multi, get_all_faces_multi, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
+from roop.face_util import get_first_face, get_first_face_multi, get_all_faces_multi, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
 from roop.landmark68 import refine_faces_landmark68
 from roop.utilities import compute_cosine_distance, get_device, str_to_class, shuffle_array
 from roop.face_stabilizer import LandmarkStabilizer
-import roop.vr_util as vr
 
 from typing import Any, List, Callable
 from roop.typing import Frame, Face
@@ -135,17 +134,26 @@ class ProcessMgr():
         # micro-jitter on footage whose alignment was already steady (user
         # confirmed A/B). Landmark smoothing above is the only temporal filter.
 
-        # Keep the face-analysis module set CONSTANT across every swap mode.
-        # Previously "all_female"/"all_male" appended 'genderage', which changed
-        # g_desired_face_analysis and forced get_face_analyser() to REBUILD
-        # buffalo_l with a different allowed_modules set. A different module set
-        # yields subtly different landmark_2d_106 for the same face, and since
-        # that landmark drives the Expression Restorer, the SAME ER strength
-        # produced a visibly different result in gender modes than in
-        # "selected"/"all". Including 'genderage' always (it's cheap) makes the
-        # analyser identical in every mode, so one ER strength value now behaves
-        # the same whichever detection mode you pick.
-        roop.globals.g_desired_face_analysis = ["landmark_3d_68", "landmark_2d_106", "detection", "recognition", "genderage"]
+        # Face-analysis module set. Kept CONSTANT across every swap mode (see
+        # note below), but it DOES follow use_landmark_alignment: the buffalo_l
+        # 68-point model (1k3d68.onnx) runs on every face of every frame, and
+        # after the hull mask was removed the ONLY consumer of those 68 points is
+        # the landmark alignment. So when alignment runs from the detector kps
+        # instead, requesting them is paid-for inference whose result is thrown
+        # away -- we drop the module entirely.
+        #
+        # Why the set must not vary with swap_mode: "all_female"/"all_male" used
+        # to append 'genderage', which changed the list and forced
+        # get_face_analyser() to REBUILD buffalo_l with different allowed_modules.
+        # A different module set yields subtly different landmark_2d_106 for the
+        # same face, and since that landmark drives the Expression Restorer, the
+        # SAME ER strength looked different in gender modes. 'genderage' is cheap,
+        # so it is always included and one ER value now behaves identically in
+        # every detection mode.
+        analysis_modules = ["landmark_2d_106", "detection", "recognition", "genderage"]
+        if getattr(roop.globals, 'use_landmark_alignment', True):
+            analysis_modules.insert(0, "landmark_3d_68")
+        roop.globals.g_desired_face_analysis = analysis_modules
         if options.swap_mode == "all_random":
             # don't modify original list
             self.input_face_datas = input_faces.copy()
@@ -691,22 +699,6 @@ class ProcessMgr():
         return None
 
 
-    def auto_rotate_frame(self, original_face, frame:Frame):
-        target_face = original_face
-        original_frame = frame
-
-        rotation_action = self.rotation_action(original_face, frame)
-
-        if rotation_action == "rotate_anticlockwise":
-            #face is horizontal, rotating frame anti-clockwise and getting face bounding box from rotated frame
-            frame = rotate_anticlockwise(frame)
-        elif rotation_action == "rotate_clockwise":
-            #face is horizontal, rotating frame clockwise and getting face bounding box from rotated frame
-            frame = rotate_clockwise(frame)
-
-        return target_face, frame, rotation_action
-    
-
     def auto_unrotate_frame(self, frame:Frame, rotation_action):
         if rotation_action == "rotate_anticlockwise":
             return rotate_clockwise(frame)
@@ -947,73 +939,6 @@ class ProcessMgr():
         return blended_image.astype(np.uint8)
 
 
-    def _build_hull_matte(self, crop_h, crop_w, M_scale, target_face):
-        """Build a face-region matte in crop space from the 68-point landmark
-        convex hull (with forehead extension). Returns a uint8 mask the same
-        size as the swapped crop, or None if landmarks are unavailable.
-
-        This follows the actual face silhouette, so when warped back at extreme
-        angles it does not spill onto the neck / ears / background the way a
-        plain rectangle does -- which is the main cause of the 'off' halo."""
-        from roop.face_util import trans_points2d
-        landmarks68 = getattr(target_face, "landmark_3d_68", None)
-        if landmarks68 is None:
-            return None
-        try:
-            pts = np.asarray(landmarks68, dtype=np.float32)[:, :2]
-            # project frame-space landmarks into the (upscaled) crop space
-            pts_crop = trans_points2d(pts, np.asarray(M_scale, dtype=np.float32))
-            jaw = pts_crop[0:17]
-            brows = pts_crop[17:27]
-            chin = pts_crop[8]
-            brow_center = brows.mean(axis=0)
-            up = brow_center - chin  # vector pointing from chin up to the brows
-            forehead = brows + up * float(roop.globals.face_hull_forehead)
-            # Use ALL 68 landmarks (+ forehead extension), not just the jaw outline.
-            # Frontally the jaw is the outer contour so the hull is identical, but at
-            # profile the NOSE protrudes past the jaw line -- if only jaw+forehead is
-            # hulled the nose tip falls outside the matte and the swap is clipped just
-            # before the nose. Including the nose/eye/mouth points fixes that.
-            hull_pts = np.vstack([pts_crop, forehead]).astype(np.float32)
-
-            # Expand the hull outward from its centroid so it covers the whole
-            # face up to the jaw/hairline (compensates the later erosion in
-            # blur_area). This is a cheap polygon scale -- the previous version
-            # used a 100+px cv2.dilate kernel which was ~10x slower per face.
-            dilate = float(roop.globals.face_hull_dilate)
-            if dilate > 0:
-                c = hull_pts.mean(axis=0)
-                hull_pts = c + (hull_pts - c) * (1.0 + dilate)
-
-            hull = cv2.convexHull(hull_pts.astype(np.int32))
-            # Degeneracy guard: at strong yaw (profile) or pitch (looking up) the
-            # far-side jaw landmarks collapse, so the jaw+forehead hull shrinks to
-            # a sliver. Intersecting that would cut the face in half. But falling
-            # back to the full rectangle makes the swap SPILL past the forehead /
-            # hairline onto hair and background (the look-up artefact). Instead,
-            # fall back to an ELLIPSE fit to the landmarks: it always has area (no
-            # profile sliver) yet stays bounded to the face oval (no spill).
-            min_frac = float(getattr(roop.globals, 'face_hull_min_area', 0.22))
-            if cv2.contourArea(hull) < min_frac * float(crop_h * crop_w):
-                allpts = np.vstack([pts_crop, forehead]).astype(np.float32)
-                if len(allpts) >= 5:
-                    try:
-                        (ecx, ecy), (eMA, ema), eang = cv2.fitEllipse(allpts)
-                        grow = 1.0 + float(roop.globals.face_hull_dilate) + 0.12
-                        matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
-                        cv2.ellipse(matte, (int(ecx), int(ecy)),
-                                    (int(eMA * 0.5 * grow), int(ema * 0.5 * grow)),
-                                    eang, 0, 360, 255, -1)
-                        return matte
-                    except Exception:
-                        return None
-                return None
-            matte = np.zeros((crop_h, crop_w), dtype=np.uint8)
-            cv2.fillConvexPoly(matte, hull, 255)
-            return matte
-        except Exception:
-            return None
-
     def paste_upscale(self, fake_face, upsk_face, M, target_img, scale_factor, mask_offsets, target_face=None):
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
@@ -1030,13 +955,6 @@ class ProcessMgr():
         left = int(mask_offsets[2] * w)
         right = int(w - (mask_offsets[3] * w))
         img_matte[top:bottom,left:right] = 255
-
-        # Optionally intersect the rectangle with the face convex hull so the
-        # matte follows the face contour (key fix for angled poses).
-        if roop.globals.use_face_hull_mask and target_face is not None:
-            hull_matte = self._build_hull_matte(h, w, M_scale, target_face)
-            if hull_matte is not None:
-                img_matte = np.minimum(img_matte, hull_matte)
 
         # Transform white area back to target_img (INTER_LINEAR for soft,
         # anti-aliased edges instead of the stair-stepped INTER_NEAREST).
@@ -1432,10 +1350,6 @@ class ProcessMgr():
         source = (source - source_mean) * (target_std / source_std) + target_mean
         return cv2.cvtColor(np.clip(source, 0, 255).astype("uint8"), cv2.COLOR_LAB2BGR)
 
-
-
-    def unload_models():
-        pass
 
 
     def release_resources(self):

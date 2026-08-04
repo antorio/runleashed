@@ -1,6 +1,4 @@
 import os
-import shutil
-import pathlib
 import traceback
 import gradio as gr
 import roop.utilities as util
@@ -135,14 +133,9 @@ def faceswap_tab():
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
                 with gr.Accordion(label="Alignment & stabilization", open=False):
-                    # NOTE (menu diet): "Use landmark alignment" was removed from the
-                    # UI -- it's the settled main fix and stays ON (roop.globals.
-                    # use_landmark_alignment). The sanity-gate checkbox was folded
-                    # into the threshold slider (gate is always armed; a high
-                    # threshold effectively disables it). Tunables that were removed
-                    # from the UI remain available in roop/globals.py.
-                    fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model for swap alignment. Off = buffalo_l.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_gate_thr = gr.Slider(0.02, 0.20, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Landmark sanity gate", info='fall back to detector kps when 68pt landmarks disagree beyond this fraction of face size. Lower = stricter, 0.20 = almost never', interactive=True)
+                    fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="On = align from the 68-point landmarks. Off = align from the detector's 5 keypoints (coarser but steadier at hard poses, and skips the 68pt model entirely).", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
+                    fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model. Only has an effect while landmark alignment is on.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_gate_thr = gr.Slider(0.02, 0.20, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Landmark sanity gate", info='fall back to detector kps when the 68pt landmarks disagree beyond this fraction of face size. Lower = stricter, 0.20 = almost never. Only applies while landmark alignment is on', interactive=True)
                     fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
                     fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
@@ -186,6 +179,7 @@ def faceswap_tab():
     # live-global controls moved here from the Settings tab (no Apply needed):
     # write straight to roop.globals so preview/run pick them up immediately.
     _fs_toggles = [
+        (fs_use_lmk_align, 'use_landmark_alignment'),
         (fs_use_hi_lmk, 'use_hi_landmarker'),
         (fs_multi_angle, 'multi_angle_detection_mode'),
         (fs_color_transfer, 'use_color_transfer'),
@@ -343,11 +337,6 @@ def on_add_local_faceset(folder):
         gr.Warning("Empty folder or folder not found!")
     return files
 
-def on_set_output_folder(folder):
-    roop.globals.output_path = folder
-    gr.Warning("New output set")
-    return
-
 def on_srcfile_changed(srcfiles, progress=gr.Progress()):
     global SELECTION_FACES_DATA, IS_INPUT, input_faces, face_selection, last_image
     
@@ -425,46 +414,6 @@ def remove_selected_input_face():
         del f
 
     return ui.globals.ui_input_thumbs
-
-def move_selected_input(button_text):
-    global SELECTED_INPUT_FACE_INDEX
-
-    if button_text == "⬅ Move left":
-        if SELECTED_INPUT_FACE_INDEX <= 0:
-            return ui.globals.ui_input_thumbs
-        offset = -1
-    else:
-        if len(ui.globals.ui_input_thumbs) <= SELECTED_INPUT_FACE_INDEX:
-            return ui.globals.ui_input_thumbs
-        offset = 1
-    
-    f = roop.globals.INPUT_FACESETS.pop(SELECTED_INPUT_FACE_INDEX)
-    roop.globals.INPUT_FACESETS.insert(SELECTED_INPUT_FACE_INDEX + offset, f)
-    f = ui.globals.ui_input_thumbs.pop(SELECTED_INPUT_FACE_INDEX)
-    ui.globals.ui_input_thumbs.insert(SELECTED_INPUT_FACE_INDEX + offset, f)
-    return ui.globals.ui_input_thumbs
-        
-
-def move_selected_target(button_text):
-    global SELECTED_TARGET_FACE_INDEX
-
-    if button_text == "⬅ Move left":
-        if SELECTED_TARGET_FACE_INDEX <= 0:
-            return ui.globals.ui_target_thumbs
-        offset = -1
-    else:
-        if len(ui.globals.ui_target_thumbs) <= SELECTED_TARGET_FACE_INDEX:
-            return ui.globals.ui_target_thumbs
-        offset = 1
-    
-    f = roop.globals.TARGET_FACES.pop(SELECTED_TARGET_FACE_INDEX)
-    roop.globals.TARGET_FACES.insert(SELECTED_TARGET_FACE_INDEX + offset, f)
-    f = ui.globals.ui_target_thumbs.pop(SELECTED_TARGET_FACE_INDEX)
-    ui.globals.ui_target_thumbs.insert(SELECTED_TARGET_FACE_INDEX + offset, f)
-    return ui.globals.ui_target_thumbs
-
-
-
 
 def on_select_target_face(evt: gr.SelectData):
     global SELECTED_TARGET_FACE_INDEX
@@ -706,11 +655,6 @@ def on_preview_mask(swap_model, frame_num, files, clip_text, mask_engine):
     return util.convert_to_gradio(current_frame)
 
 
-def on_clear_input_faces():
-    ui.globals.ui_input_thumbs.clear()
-    roop.globals.INPUT_FACESETS.clear()
-    return ui.globals.ui_input_thumbs
-
 def on_clear_destfiles():
     roop.globals.TARGET_FACES.clear()
     ui.globals.ui_target_thumbs.clear()
@@ -907,12 +851,6 @@ def on_resultfiles_finished(files):
         traceback.print_exc()
         gr.Warning(f'Could not preview result: {e}')
         return gr.Image(visible=False), gr.Video(visible=False)
-
-
-def get_gradio_output_format():
-    if roop.globals.CFG.output_image_format == "jpg":
-        return "jpeg"
-    return roop.globals.CFG.output_image_format
 
 
 def display_output(filename):

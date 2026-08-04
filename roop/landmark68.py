@@ -4,7 +4,7 @@ Stage-1 upgrade over buffalo_l's landmark_3d_68: when enabled (toggle
 `use_hi_landmarker`) and the model file is present, the 2dfan4 68 landmarks
 replace `face.landmark_3d_68` for every detected face. Those landmarks drive:
   - landmark-based swap alignment (when use_landmark_alignment is on), and
-  - the occlusion face-hull mask.
+  - nothing else (the swap alignment is its only consumer).
 The 5-point arcface keypoints (kps) used for the core inswapper warp are NOT
 touched, so face identity is unaffected. buffalo_l's landmark_2d_106 (mouth
 mask / forehead) is also left as-is.
@@ -135,11 +135,16 @@ class _Fan2d4:
 def refine_faces_landmark68(frame, faces):
     """If enabled, overwrite each face's landmark_3d_68 with 2dfan4's 68 points.
 
-    Runs BEFORE temporal smoothing and BEFORE the swap, so alignment + hull mask
-    consume the higher-accuracy landmarks. z is preserved from buffalo_l's 3d68
+    Runs BEFORE temporal smoothing and BEFORE the swap, so the alignment
+    consumes the higher-accuracy landmarks. z is preserved from buffalo_l's 3d68
     (2dfan4 is 2D). Any failure falls back to the existing landmarks silently.
     """
     if not getattr(roop.globals, 'use_hi_landmarker', False):
+        return faces
+    # The 68 points are consumed by the landmark alignment and nothing else, so
+    # running 2dfan4 while alignment uses the detector kps would be pure wasted
+    # inference (its result would be overwritten-then-ignored).
+    if not getattr(roop.globals, 'use_landmark_alignment', True):
         return faces
     if not faces:
         return faces
