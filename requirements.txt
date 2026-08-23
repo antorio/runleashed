@@ -1,14 +1,17 @@
---extra-index-url https://download.pytorch.org/whl/cu124
-numpy==1.26.4
+# Python 3.13 compatible (Colab "Latest" runtime).
+# torch / torchvision are intentionally NOT pinned: Colab ships a CUDA build
+# that already matches its Python, so pinning forced a ~900MB download of a
+# wheel that may not even exist for the current interpreter. They are only used
+# by the optional Clip2Seg mask engine and a cuda.is_available() check.
+numpy==2.1.3
 gradio==5.9.1
 opencv-python-headless==4.10.0.84
-onnx==1.16.1
+onnx==1.18.0
 insightface==0.7.3
-albucore==0.0.16
 psutil==5.9.6
-torch==2.5.1+cu124; sys_platform != 'darwin'
-torchvision==0.20.1+cu124; sys_platform != 'darwin'
-onnxruntime-gpu==1.19.0; sys_platform != 'darwin'
+torch
+torchvision
+onnxruntime-gpu==1.21.0; sys_platform != 'darwin'
 tqdm==4.66.4
 ftfy
 regex
