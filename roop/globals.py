@@ -53,7 +53,7 @@ use_color_transfer = False
 # after the expression restorer now. False (default) = mask runs before the
 # enhancer; True = mask runs after the enhancer too, so restored occluders
 # (hands/hair/etc) are not altered by the enhancer.
-mask_after_enhancer = False
+mask_after_enhancer = True
 
 # Multi-angle detection: try rotated copies of the frame so sideways / upside
 # down faces are found and landmarked upright. 'off' | 'fallback' | 'always'.
@@ -110,12 +110,6 @@ faceset_outlier_threshold = 0.6
 # target's real expression onto the swapped face. Off by default (heavy model).
 expression_restorer = False
 expression_restorer_factor = 80     # 0-100 -> blend amount
-# Colour-match the LivePortrait result to the swapped face before blending it
-# back. LP replaces the whole face interior and its tone drifts at profile
-# angles, which looks like 'raw' skin colour; this keeps LP's expression but
-# the swap's colour. strength 1.0 = full match, 0 = off.
-expression_color_match = True
-expression_color_match_strength = 1.0
 expression_restore_eyes = True
 expression_restore_mouth = True
 expression_restore_brows = True

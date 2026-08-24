@@ -964,9 +964,14 @@ class ProcessMgr():
         # Transform white area back to target_img (INTER_LINEAR for soft,
         # anti-aliased edges instead of the stair-stepped INTER_NEAREST).
         img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_LINEAR, borderValue=0.0)
-        ##Blacken the edges of face_matte by 1 pixels (so the mask in not expanded on the image edges)
-        img_matte[:1,:] = img_matte[-1:,:] = img_matte[:,:1] = img_matte[:,-1:] = 0
 
+        # NOTE: the frame border used to be zeroed HERE, before blur_area. That
+        # was wrong: blur_area erodes with a kernel scaled to the face size, so
+        # the freshly-created zero along the image edge got eaten inward and the
+        # swap stopped 10-20px short of the picture edge (a visible "inner
+        # frame" whenever a face sits against the side of the shot). blur_area
+        # now replicates the border while eroding, so a matte that legitimately
+        # touches the frame edge keeps reaching it.
         img_matte = self.blur_area(img_matte, mask_offsets[4], mask_offsets[5])
         #Normalize images to float values and reshape
         img_matte = img_matte.astype(np.float32)/255
@@ -1040,13 +1045,28 @@ class ProcessMgr():
         # k = max(mask_size//12, 8)
         k = max(mask_size//(blur_amount // 2) , blur_amount // 2)
         kernel = np.ones((k,k),np.uint8)
+        # Pad with BORDER_REPLICATE before eroding/blurring. Without it the area
+        # outside the image counts as background, so a face touching the edge of
+        # the frame is eroded inward from that edge as well -- the swap then
+        # fades out before the picture border. Replicating keeps the edge value,
+        # so only REAL mask borders are feathered. The pad is removed at the end.
+        k2 = max(mask_size//blur_amount, blur_amount//5)
+        pad = int(k * max(1, num_erosion_iterations) + 2 * k2 + 4)
+        img_matte = cv2.copyMakeBorder(img_matte, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
         img_matte = cv2.erode(img_matte,kernel,iterations = num_erosion_iterations)
         #Calculate the kernel size for blurring img_matte by blur_size (insightface empirical guess for best size was max(mask_size//20, 5))
         # k = max(mask_size//24, 4) 
-        k = max(mask_size//blur_amount, blur_amount//5) 
-        kernel_size = (k, k)
+        kernel_size = (k2, k2)
         blur_size = tuple(2*i+1 for i in kernel_size)
-        return cv2.GaussianBlur(img_matte, blur_size, 0)
+        img_matte = cv2.GaussianBlur(img_matte, blur_size, 0)
+        # drop the replication pad -> back to the original frame size
+        h_p, w_p = img_matte.shape[:2]
+        img_matte = img_matte[pad:h_p - pad, pad:w_p - pad]
+        # Now that feathering is done, kill exactly one pixel along the image
+        # border so the matte can never bleed outside the frame during the
+        # float blend. One pixel is invisible, unlike the old pre-erosion zero.
+        img_matte[:1, :] = img_matte[-1:, :] = img_matte[:, :1] = img_matte[:, -1:] = 0
+        return img_matte
 
 
     def prepare_crop_frame(self, swap_frame):

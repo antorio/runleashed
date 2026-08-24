@@ -133,33 +133,29 @@ def faceswap_tab():
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
                 with gr.Accordion(label="Alignment & stabilization", open=False):
-                    fs_det_thresh = gr.Slider(0.10, 0.90, value=lambda a='det_thresh': getattr(roop.globals, a), step=0.01, label="Detection confidence", info="Minimum score a face must reach to be swapped. A face sitting right at the threshold is detected on one frame and missed on the next, which looks like the swap blinking on and off. Lower = keeps borderline faces (profile, blur, small) swapped consistently; too low invites false detections.", interactive=True)
-                    fs_det_size = gr.Dropdown([320, 640, 1024], value=lambda a='det_size': getattr(roop.globals, a), label="Detection size", info="Detector input resolution. Larger finds smaller / farther faces (useful for low-res sources) but is slower; 320 starts missing faces below roughly 36px.", interactive=True)
-                    fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="On = align from the 68-point landmarks. Off = align from the detector's 5 keypoints (coarser but steadier at hard poses, and skips the 68pt model entirely).", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
-                    fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model. Only has an effect while landmark alignment is on.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_gate = gr.Checkbox(label="Landmark sanity gate", info="Fall back to the detector keypoints on frames where the 68pt landmarks look broken. Off = never checked (no cost, alignment never switches basis).", value=lambda a='landmark_sanity_gate': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_gate_thr = gr.Slider(0.0, 0.50, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Gate threshold", info='disagreement allowed before falling back, as a FRACTION OF FACE SIZE (0.10 on a 200px face = 20px). Lower = fires more often. Only used while the gate is on', interactive=True)
+                    fs_det_thresh = gr.Slider(0.10, 0.90, value=lambda a='det_thresh': getattr(roop.globals, a), step=0.01, label="Detection confidence", interactive=True)
+                    fs_det_size = gr.Dropdown([320, 640, 1024], value=lambda a='det_size': getattr(roop.globals, a), label="Detection size", interactive=True)
+                    fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="Off = align from the detector's 5 keypoints", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
+                    fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Only used while landmark alignment is on", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_gate = gr.Checkbox(label="Landmark sanity gate", info="Falls back to detector keypoints when the 68pt landmarks look broken", value=lambda a='landmark_sanity_gate': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_gate_thr = gr.Slider(0.0, 0.50, value=lambda a='landmark_sanity_threshold': getattr(roop.globals, a), step=0.005, label="Gate threshold", info='fraction of face size. Lower = fires more often', interactive=True)
                     fs_multi_angle = gr.Dropdown(["off", "fallback", "always"], label="Multi-angle detection", info="fallback = only rotate when 0° finds nothing", value=lambda a='multi_angle_detection_mode': getattr(roop.globals, a), interactive=True)
                     fs_color_transfer = gr.Checkbox(label="Color transfer (LAB) toward target", value=lambda a='use_color_transfer': getattr(roop.globals, a), interactive=True)
                     fs_mask_after_enh = gr.Checkbox(label="Occlusion mask after enhancer", value=lambda a='mask_after_enhancer': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_smooth = gr.Checkbox(label="Landmark smoothing (video)", info="Reduce per-frame jitter in video", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
-                    fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", info='higher = smoother', interactive=True)
-                    fs_lmk_deadzone = gr.Slider(0.0, 0.03, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Still-face dead-zone", info='freezes sub-threshold wobble while the head is still; the main knob for whole-face jitter. Higher = calmer, 0 = off', interactive=True)
+                    fs_lmk_smooth = gr.Checkbox(label="Landmark smoothing (video)", info="Reduces per-frame jitter", value=lambda a='landmark_smoothing': getattr(roop.globals, a), interactive=True)
+                    fs_lmk_smooth_str = gr.Slider(0.0, 1.0, value=lambda a='landmark_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Smoothing strength", interactive=True)
+                    fs_lmk_deadzone = gr.Slider(0.0, 0.03, value=lambda a='landmark_smoothing_deadzone': getattr(roop.globals, a), step=0.001, label="Still-face threshold freezes", info='Higher = calmer, 0 = off', interactive=True)
 
                 with gr.Accordion(label="Expression Restorer", open=True):
-                    # ER controls + tuning merged into one group (was "Expression"
-                    # + "Expression restorer — tuning"). Settled tunables (blend
-                    # border 0.2, pose-gate soft/hard 45/65 deg) stay in globals.
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
                     sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
                     with gr.Row(elem_id="expr_checks"):
                         cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
-                    fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='temporal smoothing the ER; 0 = off', interactive=True)
-                    fs_expr_colormatch = gr.Checkbox(label="Match LivePortrait colour to the swap", info="The restorer replaces the whole face interior; at profile angles its tone drifts and the skin looks raw. This keeps its expression but the swapped face's colour.", value=lambda a='expression_color_match': getattr(roop.globals, a), interactive=True)
-                    fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='amplify expression', interactive=True)
-                    fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", info="Locks the global drift of the expression delta but lets genuine global expression (jaw drop, small head bob) through within a tolerance", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
+                    fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='0 = off', interactive=True)
+                    fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='1.0 = target amount', interactive=True)
+                    fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
                     fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
 
                 with gr.Accordion(label="Enhancement", open=True):
@@ -186,7 +182,6 @@ def faceswap_tab():
         (fs_det_thresh, 'det_thresh'),
         (fs_det_size, 'det_size'),
         (fs_use_lmk_align, 'use_landmark_alignment'),
-        (fs_expr_colormatch, 'expression_color_match'),
         (fs_use_hi_lmk, 'use_hi_landmarker'),
         (fs_lmk_gate, 'landmark_sanity_gate'),
         (fs_lmk_gate_thr, 'landmark_sanity_threshold'),
