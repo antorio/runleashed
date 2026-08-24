@@ -47,3 +47,13 @@ pengecekan cuda.is_available(). Efek samping: install jauh lebih cepat.
 - Peringatan skimage: `SimilarityTransform.estimate` deprecated (dihapus di
   skimage 2.2). Masih jalan sekarang; perlu diganti ke `from_estimate` sebelum
   skimage 2.2 mendarat.
+
+## Tambahan: macOS
+`onnxruntime-gpu` dilewati di darwin (tidak ada build CUDA untuk Mac), TAPI
+sebelumnya tidak ada penggantinya sama sekali -- jadi setelah `pip install -r
+requirements.txt` di Mac, onnxruntime tetap tidak terpasang dan run.py gagal.
+Ditambahkan: `onnxruntime==1.25.1; sys_platform == 'darwin'` (versi terendah yang
+punya wheel macOS cp313, tersedia arm64/universal2).
+Selain itu torch/torchvision kini TANPA marker darwin (dulu dikecualikan di Mac),
+jadi Mac ikut mendapatkannya dari PyPI.
+config.yaml lokal sudah `provider: cpu`, cocok untuk Mac.

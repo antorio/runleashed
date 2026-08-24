@@ -1,4 +1,4 @@
-# Python 3.13 compatible (Colab "Latest" runtime).
+# Python 3.13 compatible (Colab "Latest" runtime, and macOS/CPU).
 # torch / torchvision are intentionally NOT pinned: Colab ships a CUDA build
 # that already matches its Python, so pinning forced a ~900MB download of a
 # wheel that may not even exist for the current interpreter. They are only used
@@ -12,6 +12,8 @@ psutil==5.9.6
 torch
 torchvision
 onnxruntime-gpu==1.21.0; sys_platform != 'darwin'
+# macOS has no CUDA build; plain onnxruntime (CPU / CoreML) is used there.
+onnxruntime==1.25.1; sys_platform == 'darwin'
 tqdm==4.66.4
 ftfy
 regex
