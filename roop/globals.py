@@ -30,7 +30,15 @@ subsample_size = 128
 face_swap_mode = None
 blend_ratio = 0.5
 distance_threshold = 0.65
-default_det_size = True
+# Face detector settings (live -- see get_face_analyser).
+# det_thresh: confidence a detection must reach to be accepted. insightface's
+# default is 0.5; faces sitting right at the threshold flicker in and out
+# between frames (swapped / not swapped / swapped), so lowering it keeps
+# borderline faces (profile, motion blur, small) swapped consistently.
+det_thresh = 0.5
+# det_size: detector input resolution. Larger finds smaller/farther faces at
+# the cost of speed; 320 starts missing faces below roughly 36px.
+det_size = 640
 
 # --- Accuracy / quality toggles (RunLeashed improvements) ---
 # Derive the 5 alignment keypoints from the stable 68-point landmark model
@@ -102,6 +110,12 @@ faceset_outlier_threshold = 0.6
 # target's real expression onto the swapped face. Off by default (heavy model).
 expression_restorer = False
 expression_restorer_factor = 80     # 0-100 -> blend amount
+# Colour-match the LivePortrait result to the swapped face before blending it
+# back. LP replaces the whole face interior and its tone drifts at profile
+# angles, which looks like 'raw' skin colour; this keeps LP's expression but
+# the swap's colour. strength 1.0 = full match, 0 = off.
+expression_color_match = True
+expression_color_match_strength = 1.0
 expression_restore_eyes = True
 expression_restore_mouth = True
 expression_restore_brows = True
@@ -175,6 +189,7 @@ no_face_action = 1                  # default: Retry rotated
 processing = False
 
 g_current_face_analysis = None
+g_current_det_params = None
 # Constant module set for face analysis in every mode (see ProcessMgr.initialize).
 # Defaulting it here means source-face extraction uses the same analyser as
 # processing, so buffalo_l isn't rebuilt on the first swap.

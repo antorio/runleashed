@@ -133,6 +133,8 @@ def faceswap_tab():
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
                 with gr.Accordion(label="Alignment & stabilization", open=False):
+                    fs_det_thresh = gr.Slider(0.10, 0.90, value=lambda a='det_thresh': getattr(roop.globals, a), step=0.01, label="Detection confidence", info="Minimum score a face must reach to be swapped. A face sitting right at the threshold is detected on one frame and missed on the next, which looks like the swap blinking on and off. Lower = keeps borderline faces (profile, blur, small) swapped consistently; too low invites false detections.", interactive=True)
+                    fs_det_size = gr.Dropdown([320, 640, 1024], value=lambda a='det_size': getattr(roop.globals, a), label="Detection size", info="Detector input resolution. Larger finds smaller / farther faces (useful for low-res sources) but is slower; 320 starts missing faces below roughly 36px.", interactive=True)
                     fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="On = align from the 68-point landmarks. Off = align from the detector's 5 keypoints (coarser but steadier at hard poses, and skips the 68pt model entirely).", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
                     fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Alternative 68-point landmark model. Only has an effect while landmark alignment is on.", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
                     fs_lmk_gate = gr.Checkbox(label="Landmark sanity gate", info="Fall back to the detector keypoints on frames where the 68pt landmarks look broken. Off = never checked (no cost, alignment never switches basis).", value=lambda a='landmark_sanity_gate': getattr(roop.globals, a), interactive=True)
@@ -155,6 +157,7 @@ def faceswap_tab():
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
                     fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='temporal smoothing the ER; 0 = off', interactive=True)
+                    fs_expr_colormatch = gr.Checkbox(label="Match LivePortrait colour to the swap", info="The restorer replaces the whole face interior; at profile angles its tone drifts and the skin looks raw. This keeps its expression but the swapped face's colour.", value=lambda a='expression_color_match': getattr(roop.globals, a), interactive=True)
                     fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='amplify expression', interactive=True)
                     fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", info="Locks the global drift of the expression delta but lets genuine global expression (jaw drop, small head bob) through within a tolerance", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
                     fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
@@ -180,7 +183,10 @@ def faceswap_tab():
     # live-global controls moved here from the Settings tab (no Apply needed):
     # write straight to roop.globals so preview/run pick them up immediately.
     _fs_toggles = [
+        (fs_det_thresh, 'det_thresh'),
+        (fs_det_size, 'det_size'),
         (fs_use_lmk_align, 'use_landmark_alignment'),
+        (fs_expr_colormatch, 'expression_color_match'),
         (fs_use_hi_lmk, 'use_hi_landmarker'),
         (fs_lmk_gate, 'landmark_sanity_gate'),
         (fs_lmk_gate_thr, 'landmark_sanity_threshold'),

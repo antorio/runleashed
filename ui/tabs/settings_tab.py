@@ -30,7 +30,6 @@ def settings_tab():
                     max_threads = gr.Slider(1, 32, value=roop.globals.CFG.max_threads, label="Max. Number of Threads", step=1.0, interactive=True)
                     memory_limit = gr.Slider(0, 128, value=roop.globals.CFG.memory_limit, label="Max. Memory to use (Gb)", info='0 meaning no limit', step=1.0, interactive=True)
                     settings_controls.append(gr.Checkbox(label="Force CPU for Face Analyser", value=roop.globals.CFG.force_cpu, elem_id='force_cpu', interactive=True))
-                    chk_det_size = gr.Checkbox(label="Use default Det-Size", value=True, elem_id='default_det_size', interactive=True)
                 with gr.Accordion("Output", open=True):
                     output_template = gr.Textbox(label="Filename Output Template", info="(file extension is added automatically)", lines=1, placeholder='{file}_{time}', value=roop.globals.CFG.output_template)
                     output_folder_box = gr.Textbox(label="Output Folder", info="Where results are saved", lines=1, placeholder='/content/drive/MyDrive/c', value=getattr(roop.globals.CFG, 'output_folder', '/content/drive/MyDrive/c'))
@@ -76,8 +75,6 @@ def settings_tab():
     expr_cal_dx.release(fn=lambda v, n='expression_lp_cal_dx': on_global_value_changed(v, n), inputs=[expr_cal_dx])
     expr_cal_dy.release(fn=lambda v, n='expression_lp_cal_dy': on_global_value_changed(v, n), inputs=[expr_cal_dy])
     expr_cal_rot.release(fn=lambda v, n='expression_lp_cal_rot': on_global_value_changed(v, n), inputs=[expr_cal_rot])
-
-    chk_det_size.select(fn=on_option_changed)
 
     # New accuracy / quality controls -> roop.globals (live, reset to globals.py on restart)
     for c in accuracy_controls:

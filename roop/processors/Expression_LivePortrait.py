@@ -345,6 +345,15 @@ class Expression_LivePortrait():
                 restored = cv2.resize(
                     restored, (swapped_crop.shape[1], swapped_crop.shape[0]),
                     interpolation=cv2.INTER_AREA)
+            # Colour-match the LP result to the swapped face before blending.
+            # The generator replaces the whole interior, and at profile angles its
+            # tone drifts (trained mostly on frontal faces) -> "raw" looking skin.
+            # This keeps LP's expression but the swap's colour.
+            if getattr(roop.globals, 'expression_color_match', True):
+                restored = lpu.match_color(
+                    restored, swapped_crop,
+                    strength=float(getattr(roop.globals, 'expression_color_match_strength', 1.0)))
+
             border = float(getattr(roop.globals, 'expression_blend_border', 0.2))
             if border > 0:
                 restored = lpu.feather_blend(restored, swapped_crop, border=border)

@@ -352,3 +352,49 @@ def lock_pose(kp_driving, kp_source, scale_tol=0.04, rot_tol_deg=2.0):
     if ratio != 1.0:
         kd = c_s + (kd - c_s) * ratio
     return kd.astype(np.float32)
+
+
+def match_color(src, ref, region=0.6, strength=1.0):
+    """Give `src` the colour statistics of `ref` (LAB mean/std transfer).
+
+    Used on the LivePortrait result before it is blended back: the generator
+    REPLACES the whole face interior, and being trained mostly on frontal faces
+    its output tone drifts at profile angles -- which reads as a "raw"/mismatched
+    face colour even though the geometry is right. Matching the statistics keeps
+    the expression from LP while the colour stays that of the swapped face.
+
+    Statistics are taken from a CENTRED region (default 60%) rather than the
+    whole crop: the LP result is warped back with BORDER_REFLECT, so its outer
+    band contains mirrored pixels that would skew the mean/std. Both images share
+    the same framing, so the same window is comparable on each.
+
+    strength blends between the original and the corrected image (1.0 = full).
+    """
+    if src is None or ref is None or src.shape != ref.shape:
+        return src
+    try:
+        h, w = src.shape[:2]
+        rh, rw = int(h * region * 0.5), int(w * region * 0.5)
+        cy, cx = h // 2, w // 2
+        y0, y1 = max(0, cy - rh), min(h, cy + rh)
+        x0, x1 = max(0, cx - rw), min(w, cx + rw)
+        if y1 - y0 < 4 or x1 - x0 < 4:
+            y0, y1, x0, x1 = 0, h, 0, w
+
+        s_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
+        r_lab = cv2.cvtColor(ref, cv2.COLOR_BGR2LAB).astype(np.float32)
+        s_mean, s_std = cv2.meanStdDev(s_lab[y0:y1, x0:x1])
+        r_mean, r_std = cv2.meanStdDev(r_lab[y0:y1, x0:x1])
+        s_mean = s_mean.reshape(1, 1, 3); s_std = np.maximum(s_std.reshape(1, 1, 3), 1e-3)
+        r_mean = r_mean.reshape(1, 1, 3); r_std = r_std.reshape(1, 1, 3)
+
+        out = (s_lab - s_mean) * (r_std / s_std) + r_mean
+        out = cv2.cvtColor(np.clip(out, 0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        if not np.isfinite(out).all():
+            return src
+        a = float(np.clip(strength, 0.0, 1.0))
+        if a >= 1.0:
+            return out
+        return cv2.addWeighted(out, a, src, 1.0 - a, 0.0)
+    except Exception:
+        return src

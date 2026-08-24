@@ -39,10 +39,17 @@ def get_face_analyser() -> Any:
                 FACE_ANALYSER = insightface.app.FaceAnalysis(
                     name="buffalo_l", root=model_path, providers=provs,allowed_modules=allowed_modules
                 )
-            FACE_ANALYSER.prepare(
-                ctx_id=0,
-                det_size=(640, 640) if roop.globals.default_det_size else (320, 320),
-            )
+            roop.globals.g_current_det_params = None
+        # Detector settings are live: prepare() is re-run whenever the threshold
+        # or the detection size changes, so moving the sliders takes effect
+        # without restarting (it only re-configures the session, no reload).
+        det_size = int(getattr(roop.globals, 'det_size', 640) or 640)
+        det_thresh = float(getattr(roop.globals, 'det_thresh', 0.5) or 0.5)
+        params = (det_size, det_thresh)
+        if getattr(roop.globals, 'g_current_det_params', None) != params:
+            FACE_ANALYSER.prepare(ctx_id=0, det_thresh=det_thresh,
+                                  det_size=(det_size, det_size))
+            roop.globals.g_current_det_params = params
     return FACE_ANALYSER
 
 
