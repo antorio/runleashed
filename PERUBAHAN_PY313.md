@@ -57,3 +57,15 @@ punya wheel macOS cp313, tersedia arm64/universal2).
 Selain itu torch/torchvision kini TANPA marker darwin (dulu dikecualikan di Mac),
 jadi Mac ikut mendapatkannya dari PyPI.
 config.yaml lokal sudah `provider: cpu`, cocok untuk Mac.
+
+## Koreksi: onnxruntime macOS TIDAK boleh dipin
+Saya sempat memin `onnxruntime==1.25.1` untuk darwin. Itu salah: saat mengecek
+ketersediaan wheel macOS saya TIDAK membedakan arsitektur, hanya melihat ada
+arm64/universal2. Plafonnya berbeda jauh:
+    Apple Silicon (arm64) : sampai 1.29.0
+    Intel Mac  (x86_64)   : berhenti di 1.23.2
+Jadi pin apa pun akan gagal di salah satu arsitektur. Diubah jadi TANPA versi:
+    onnxruntime; sys_platform == 'darwin'
+pip akan mengambil yang tertinggi yang benar-benar ada di mesin tersebut.
+Catatan: di Intel Mac, torch juga otomatis turun ke 2.2.2 (build x86_64 macOS
+terakhir dari PyTorch) -- itu wajar dan cukup untuk mini-test di CPU.

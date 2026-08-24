@@ -1114,7 +1114,9 @@ class ProcessMgr():
                            frame:Frame=None, target_face=None):
         # aligned_img = original target crop (real expression -> driving)
         # fake_frame  = swapped crop (appearance/identity to keep)
-        factor = float(np.interp(float(roop.globals.expression_restorer_factor), [0, 100], [0.0, 1.0]))
+        # Plain division, NOT np.interp: interp clamps at the ends, so with a
+        # 0-300 slider everything above 100 would silently map to 1.0.
+        factor = max(0.0, float(roop.globals.expression_restorer_factor) / 100.0)
         context = None
         if frame is not None and target_face is not None:
             lmk = getattr(target_face, 'landmark_2d_106', None)

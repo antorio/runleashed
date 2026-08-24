@@ -39,3 +39,25 @@ Expression Restorer:
 py_compile seluruh tree; build Gradio 5.9.1 (3 tab); 7 pemeriksaan otomatis untuk
 tiap permintaan; audit kode mati (fungsi 0, globals 0); live_portrait_util
 diperiksa tidak terpotong setelah pemotongan fungsi.
+
+## Expression Restorer: power default 1.0, strength 0-300
+1. `expression_power` default 2.0 -> **1.0**, teks info dihapus.
+   2.0 berarti delta ekspresi dikali dua -- ikut menggandakan noise per-frame
+   motion extractor, sumber getaran di dalam wajah.
+2. "Expression smoothing (video wobble)" -> "Expression smoothing", info dihapus.
+3. Slider Strength 0-100 -> **0-300**.
+
+### Bug yang ikut ditemukan & diperbaiki
+Mapping lama: `np.interp(value, [0,100], [0.0,1.0])`. `np.interp` MENG-CLAMP di
+ujung rentang, jadi melebarkan slider ke 300 saja TIDAK akan berefek -- semua
+nilai di atas 100 tetap dipetakan ke 1.0 dan slider diam-diam mati di separuh
+atasnya. Diganti pembagian langsung `value/100.0`.
+Terverifikasi: 0->0.00, 50->0.50, 100->1.00, 150->1.50, 200->2.00, 300->3.00
+(sebelumnya 150/200/300 semuanya 1.00).
+
+### Catatan pemakaian
+factor dan power adalah pengali yang sama: amt = factor * power. Dengan power
+kini tetap 1.0, Strength menjadi SATU-SATUNYA knob penguatan:
+  Strength 100 = ekspresi target apa adanya (tanpa penguatan noise)
+  Strength >100 = ekstrapolasi melewati target -> ekspresi lebih tegas, TAPI
+  noise per-frame ikut dikali proporsional (inilah sumber jitter di dalam wajah).

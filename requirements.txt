@@ -12,8 +12,11 @@ psutil==5.9.6
 torch
 torchvision
 onnxruntime-gpu==1.21.0; sys_platform != 'darwin'
-# macOS has no CUDA build; plain onnxruntime (CPU / CoreML) is used there.
-onnxruntime==1.25.1; sys_platform == 'darwin'
+# macOS has no CUDA build -> plain onnxruntime (CPU / CoreML). Deliberately
+# UNPINNED: the newest available version differs by architecture (Apple
+# Silicon reaches 1.29, Intel Macs stop at 1.23.2), so any fixed pin breaks
+# on one of them. pip picks the highest that exists for the machine.
+onnxruntime; sys_platform == 'darwin'
 tqdm==4.66.4
 ftfy
 regex

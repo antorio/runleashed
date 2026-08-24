@@ -109,7 +109,7 @@ faceset_outlier_threshold = 0.6
 # LivePortrait expression restorer (optional, faceswap tab). Re-injects the
 # target's real expression onto the swapped face. Off by default (heavy model).
 expression_restorer = False
-expression_restorer_factor = 80     # 0-100 -> blend amount
+expression_restorer_factor = 80     # 0-300 -> blend amount (100 = target amount)
 expression_restore_eyes = True
 expression_restore_mouth = True
 expression_restore_brows = True
@@ -118,7 +118,7 @@ expression_restore_brows = True
 expression_clamp = 0.0
 # Amplify the driving expression delta. 1.0 = natural target amount; try 2.0-3.0
 # to make subtle expressions clearly visible (may add artifacts if pushed high).
-expression_power = 2.0
+expression_power = 1.0             # multiplier on the delta; 1.0 = target amount
 # Temporal smoothing of the LivePortrait expression vector (video wobble fix).
 # Absorbs per-frame noise in the ER expression while still following real
 # expression changes. Single control: strength (0 = off). Read live each frame.

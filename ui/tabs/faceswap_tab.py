@@ -148,13 +148,13 @@ def faceswap_tab():
 
                 with gr.Accordion(label="Expression Restorer", open=True):
                     cb_expression = gr.Checkbox(label="Restore target expression (LivePortrait)", value=roop.globals.expression_restorer)
-                    sl_expression = gr.Slider(0, 100, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
+                    sl_expression = gr.Slider(0, 300, value=roop.globals.expression_restorer_factor, step=1.0, label="Strength")
                     with gr.Row(elem_id="expr_checks"):
                         cb_expr_eyes = gr.Checkbox(label="Eyes / blink", value=roop.globals.expression_restore_eyes)
                         cb_expr_mouth = gr.Checkbox(label="Mouth", value=roop.globals.expression_restore_mouth)
                         cb_expr_brows = gr.Checkbox(label="Brows", value=roop.globals.expression_restore_brows)
-                    fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing (video wobble)", info='0 = off', interactive=True)
-                    fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", info='1.0 = target amount', interactive=True)
+                    fs_es = gr.Slider(0.0, 1.0, value=lambda a='expression_smoothing_strength': getattr(roop.globals, a), step=0.05, label="Expression smoothing", interactive=True)
+                    fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", interactive=True)
                     fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
                     fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
 
