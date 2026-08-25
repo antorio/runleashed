@@ -140,12 +140,26 @@ def _bbox_iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
-def _dedup_faces(collected, iou_thr=0.5):
-    # prefer angle-0 detections, then higher detector score
+def _dedup_faces(collected, iou_thr=0.5, angle0_bonus=0.10):
+    """Drop overlapping detections of the same face, keeping the best one.
+
+    The angle-0 detection used to win over a rotated one ALWAYS, whatever its
+    score. That backfires when the detection threshold is lowered: a weak
+    angle-0 detection then passes and outranks a strong rotated detection of the
+    same face -- so lowering the threshold made the landmarks WORSE, not just
+    more permissive. The detector's score correlates with how well its keypoints
+    are regressed, so a much weaker detection really does align worse.
+
+    Angle-0 is still preferred, but only as a bonus (default 0.10) rather than
+    an absolute veto: it wins ties and near-ties, while a rotated detection that
+    is clearly more confident now wins on merit.
+    """
     def key(item):
         ang, f = item
         s = float(getattr(f, 'det_score', 0.0) or 0.0)
-        return (0 if ang == 0 else 1, -s)
+        if ang == 0:
+            s += angle0_bonus
+        return -s
     kept = []
     for ang, f in sorted(collected, key=key):
         if any(_bbox_iou(f.bbox, kf.bbox) > iou_thr for kf in kept):
@@ -437,7 +451,15 @@ def landmark_68_to_5(landmark_68):
 # aligned, M = norm_crop2(f[1], face.kps, 512)
 def align_crop(img, landmark, image_size=112, mode="arcface"):
     M = estimate_norm(landmark, image_size)
-    warped = cv2.warpAffine(img, M, (image_size, image_size), borderValue=0.0)
+    # BORDER_REPLICATE, not a black borderValue: when the aligned crop reaches
+    # past the edge of the frame the missing area used to be filled with black.
+    # That black then travelled all the way through the swap and, on paste-back,
+    # the Gaussian-blurred matte spreads slightly BEYOND the crop quad where
+    # BORDER_REPLICATE copies the crop's edge pixel -- i.e. the black -- leaving
+    # a dark line along the swap box. It is worse at small subsample sizes
+    # because the crop is magnified more on the way back, widening the band.
+    # Replicating the edge keeps real skin tones there instead.
+    warped = cv2.warpAffine(img, M, (image_size, image_size), borderMode=cv2.BORDER_REPLICATE)
     return warped, M
 
 
@@ -445,7 +467,8 @@ def align_crop_robust(img, landmark5, image_size=128):
     """Align using a RANSAC affine fit. landmark5 is the 5-point set (kps or
     a 68->5 derived set). Returns the warped crop and the 2x3 matrix."""
     M = estimate_norm_robust(landmark5, image_size)
-    warped = cv2.warpAffine(img, M, (image_size, image_size), borderValue=0.0)
+    # see align_crop: replicate instead of black-filling out-of-frame area
+    warped = cv2.warpAffine(img, M, (image_size, image_size), borderMode=cv2.BORDER_REPLICATE)
     return warped, M
 
 
@@ -461,7 +484,8 @@ def transform(data, center, output_size, scale, rotation):
     t4 = trans.SimilarityTransform(translation=(output_size / 2, output_size / 2))
     t = t1 + t2 + t3 + t4
     M = t.params[0:2]
-    cropped = cv2.warpAffine(data, M, (output_size, output_size), borderValue=0.0)
+    # see align_crop: replicate instead of black-filling out-of-frame area
+    cropped = cv2.warpAffine(data, M, (output_size, output_size), borderMode=cv2.BORDER_REPLICATE)
     return cropped, M
 
 
