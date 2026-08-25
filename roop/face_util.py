@@ -210,7 +210,17 @@ def get_first_face_multi(frame: Frame, mode='fallback', angles=None) -> Any:
     return max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
 
 
-def extract_face_images(source_filename, video_info, extra_padding=-1.0):
+def extract_face_images(source_filename, video_info, extra_padding=-1.0, use_multi_angle=False):
+    """Collect the faces of an image / video frame for the UI pickers.
+
+    use_multi_angle: run the SAME rotated-detection passes the swap uses. Off by
+    default -- source photos and the face manager are upright, so trying four
+    orientations there only costs time and can invent faces from odd angles.
+    It is turned on for picking a TARGET face out of a video frame, because the
+    swap itself detects with rotation: without it a ~90-degree face reports "no
+    face detected" in the picker while the render finds and swaps it, so it can
+    never be marked as a target for "selected" mode.
+    """
     face_data = []
     source_image = None
 
@@ -223,7 +233,12 @@ def extract_face_images(source_filename, video_info, extra_padding=-1.0):
     else:
         source_image = cv2.imdecode(np.fromfile(source_filename, dtype=np.uint8), cv2.IMREAD_COLOR)
 
-    faces = get_all_faces(source_image)
+    if use_multi_angle:
+        faces = get_all_faces_multi(
+            source_image,
+            mode=getattr(roop.globals, 'multi_angle_detection_mode', 'fallback'))
+    else:
+        faces = get_all_faces(source_image)
     if faces is None:
         return face_data
 

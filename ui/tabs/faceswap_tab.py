@@ -452,7 +452,9 @@ def on_use_face_from_selected(files, frame_num):
                 
     elif util.is_video(roop.globals.target_path) or roop.globals.target_path.lower().endswith(('gif')):
         selected_frame = frame_num
-        SELECTION_FACES_DATA = extract_face_images(roop.globals.target_path, (True, selected_frame))
+        # target face dari frame video: pakai deteksi ber-rotasi yang sama
+        # dengan swap, supaya wajah miring bisa ditandai sebagai target
+        SELECTION_FACES_DATA = extract_face_images(roop.globals.target_path, (True, selected_frame), use_multi_angle=True)
         if len(SELECTION_FACES_DATA) > 0:
             for f in SELECTION_FACES_DATA:
                 image = util.convert_to_gradio(f[1])
