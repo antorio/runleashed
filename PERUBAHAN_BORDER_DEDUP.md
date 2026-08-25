@@ -26,12 +26,20 @@ Dua sebab, yang kedua ada di kode kita:
    MENGALAHKAN deteksi rotasi yang jauh lebih kuat untuk wajah yang sama.
    Hasilnya: menurunkan ambang bukan sekadar "lebih permisif", tapi benar-benar
    memilih deteksi yang lebih jelek.
-FIX: sudut-0 kini mendapat BONUS skor (0.10), bukan hak veto. Ia tetap menang
-pada skor sama atau selisih tipis, tapi deteksi rotasi yang jelas lebih yakin
-menang atas dasar kualitas.
-Validasi: sudut-0 0.38 vs rotasi 0.82 -> rotasi menang (dulu sudut-0 menang);
-sudut-0 0.78 vs rotasi 0.82 -> sudut-0 menang (bonus, perilaku lama terjaga);
-skor sama -> sudut-0 menang; dua wajah terpisah tetap keduanya disimpan.
+FIX yang saya coba: sudut-0 diberi BONUS skor (0.10), bukan hak veto.
+>>> DICABUT LAGI. Hasil uji user: yang tadinya bagus di 0.5 jadi rusak -- hanya
+area HIDUNG yang ter-swap, dan baru pulih di 0.6.
+Sebabnya: prioritas mutlak sudut-0 itu PENGAMAN, bukan kelalaian. Footage
+berorientasi normal, jadi deteksi sudut-0 adalah kebenaran; pass rotasi hanya
+cadangan untuk wajah yang memang miring DI DALAM frame. Dengan skema bonus,
+deteksi rotasi berskor tinggi -- yang bisa jadi positif-palsu yang mendarat di
+sebagian wajah -- merebut wajah dari deteksi sudut-0 yang benar. Kps-nya lalu
+berkerumun, similarity fit mem-zoom habis, dan hanya hidung yang ter-swap.
+Sebab #1 (skor rendah = keypoint kurang presisi) tetap berlaku dan itu SIFAT
+DETEKTOR, bukan bug kita -- tidak ada yang perlu diubah di kode untuk itu.
+Validasi setelah revert: sudut-0 menang di semua kombinasi skor (0.38 vs 0.82,
+0.78 vs 0.82, seri, 0.95 vs 0.40); rotasi tetap dipakai bila sudut-0 tak
+mendeteksi; dua wajah terpisah tetap utuh.
 
 ## Validasi umum
 py_compile seluruh tree; nol `borderValue=0.0` tersisa di face_util;

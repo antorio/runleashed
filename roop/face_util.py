@@ -140,26 +140,22 @@ def _bbox_iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
-def _dedup_faces(collected, iou_thr=0.5, angle0_bonus=0.10):
+def _dedup_faces(collected, iou_thr=0.5):
     """Drop overlapping detections of the same face, keeping the best one.
 
-    The angle-0 detection used to win over a rotated one ALWAYS, whatever its
-    score. That backfires when the detection threshold is lowered: a weak
-    angle-0 detection then passes and outranks a strong rotated detection of the
-    same face -- so lowering the threshold made the landmarks WORSE, not just
-    more permissive. The detector's score correlates with how well its keypoints
-    are regressed, so a much weaker detection really does align worse.
-
-    Angle-0 is still preferred, but only as a bonus (default 0.10) rather than
-    an absolute veto: it wins ties and near-ties, while a rotated detection that
-    is clearly more confident now wins on merit.
+    Angle-0 wins over any rotated detection, WHATEVER the scores. This is a
+    safeguard, not an oversight: the footage is in its natural orientation, so
+    the angle-0 detection is the truth and the rotated passes exist only as a
+    fallback for faces that are genuinely sideways IN the frame. Ranking purely
+    by score lets a confident rotated detection -- which can be a false positive
+    landing on part of the real face -- outrank the correct angle-0 one; its
+    keypoints then sit clustered together, the similarity fit zooms right in and
+    only the nose area ends up swapped. (Tried and reverted: score bonus.)
     """
     def key(item):
         ang, f = item
         s = float(getattr(f, 'det_score', 0.0) or 0.0)
-        if ang == 0:
-            s += angle0_bonus
-        return -s
+        return (0 if ang == 0 else 1, -s)
     kept = []
     for ang, f in sorted(collected, key=key):
         if any(_bbox_iou(f.bbox, kf.bbox) > iou_thr for kf in kept):
