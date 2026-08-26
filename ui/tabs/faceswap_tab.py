@@ -135,6 +135,7 @@ def faceswap_tab():
                 with gr.Accordion(label="Alignment & stabilization", open=False):
                     fs_det_thresh = gr.Slider(0.10, 0.90, value=lambda a='det_thresh': getattr(roop.globals, a), step=0.01, label="Detection confidence", interactive=True)
                     fs_det_size = gr.Dropdown([320, 640, 1024], value=lambda a='det_size': getattr(roop.globals, a), label="Detection size", interactive=True)
+                    fs_angle0 = gr.Slider(0.0, 1.0, value=lambda a='angle0_bonus': getattr(roop.globals, a), step=0.05, label="Upright detection priority", info='1.0 = upright always wins, lower = best score wins', interactive=True)
                     fs_use_lmk_align = gr.Checkbox(label="Landmark alignment (68pt)", info="Off = align from the detector's 5 keypoints", value=lambda a='use_landmark_alignment': getattr(roop.globals, a), interactive=True)
                     fs_use_hi_lmk = gr.Checkbox(label="Hi-accuracy 68pt landmarker (2dfan4)", info="Only used while landmark alignment is on", value=lambda a='use_hi_landmarker': getattr(roop.globals, a), interactive=True)
                     fs_lmk_gate = gr.Checkbox(label="Landmark sanity gate", info="Falls back to detector keypoints when the 68pt landmarks look broken", value=lambda a='landmark_sanity_gate': getattr(roop.globals, a), interactive=True)
@@ -180,6 +181,7 @@ def faceswap_tab():
     # write straight to roop.globals so preview/run pick them up immediately.
     _fs_toggles = [
         (fs_det_thresh, 'det_thresh'),
+        (fs_angle0, 'angle0_bonus'),
         (fs_det_size, 'det_size'),
         (fs_use_lmk_align, 'use_landmark_alignment'),
         (fs_use_hi_lmk, 'use_hi_landmarker'),

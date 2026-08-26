@@ -39,6 +39,10 @@ det_thresh = 0.5
 # det_size: detector input resolution. Larger finds smaller/farther faces at
 # the cost of speed; 320 starts missing faces below roughly 36px.
 det_size = 640
+# How strongly an upright (angle-0) detection is preferred over a rotated one
+# when both cover the same face. 1.0 = upright always wins (original), 0.10 =
+# only wins ties and near-ties, 0.0 = pure detector score.
+angle0_bonus = 1.0
 
 # --- Accuracy / quality toggles (RunLeashed improvements) ---
 # Derive the 5 alignment keypoints from the stable 68-point landmark model

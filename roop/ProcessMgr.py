@@ -13,7 +13,9 @@ from roop.face_stabilizer import LandmarkStabilizer
 from typing import Any, List, Callable
 from roop.typing import Frame, Face
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Thread, Lock
+from threading import Thread, Lock, Condition
+from contextlib import contextmanager
+import time
 from queue import Queue, Full
 from tqdm import tqdm
 from roop.ffmpeg_writer import FFMPEG_VideoWriter
@@ -48,6 +50,57 @@ def pick_queue(queue: Queue[str], queue_per_future: int) -> List[str]:
             queues.append(queue.get())
     return queues
 
+
+
+class FrameSequencer():
+    """Lets frames enter a critical section in FRAME ORDER.
+
+    Frames are handed to workers round-robin (frame N -> queue[N % threads]) and
+    all workers run at once, so the shared LandmarkStabilizer was receiving
+    frames in an arbitrary, interleaved order -- its "previous frame" could be
+    any of the 8 in flight. Temporal smoothing on a shuffled sequence is not
+    smoothing at all: it blended each frame against the wrong neighbour and its
+    motion-adaptive alpha measured motion across ~8-frame gaps, so it kept
+    concluding "big movement" and disengaging.
+
+    Only detection + landmark refinement + smoothing needs the ordering; the
+    expensive swap/paste stays fully parallel. While frame N is inside the
+    section, frame N-1 is already swapping, so throughput is barely affected.
+    """
+    def __init__(self):
+        self._cond = Condition()
+        self._expected = 0
+
+    def reset(self):
+        with self._cond:
+            self._expected = 0
+            self._cond.notify_all()
+
+    @contextmanager
+    def in_order(self, index, timeout=10.0):
+        if index is None:
+            yield          # no index (preview / image batch) -> no ordering
+            return
+        with self._cond:
+            deadline = time.time() + timeout
+            while self._expected != index and roop.globals.processing:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    # Never hang the render: if the frame we are waiting for was
+                    # dropped, carry on unordered rather than deadlock.
+                    break
+                # wait in short slices: an abort flips roop.globals.processing
+                # without touching this condition, so a waiter that slept for the
+                # whole timeout would keep the Stop button hanging for seconds.
+                self._cond.wait(min(remaining, 0.1))
+        try:
+            yield
+        finally:
+            with self._cond:
+                # always advance, even on exception, or every later frame stalls
+                if index >= self._expected:
+                    self._expected = index + 1
+                self._cond.notify_all()
 
 
 class ProcessMgr():
@@ -125,6 +178,7 @@ class ProcessMgr():
         devicename = get_device()
 
         # (re)create the temporal landmark smoother for this run
+        self.sequencer = FrameSequencer()
         self.stabilizer = LandmarkStabilizer(
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
@@ -282,7 +336,7 @@ class ProcessMgr():
             # deadlocking the whole teardown.
             while roop.globals.processing:
                 try:
-                    self.frames_queue[num_frame % num_threads].put(frame, block=True, timeout=0.2)
+                    self.frames_queue[num_frame % num_threads].put((num_frame, frame), block=True, timeout=0.2)
                     break
                 except Full:
                     continue
@@ -302,18 +356,21 @@ class ProcessMgr():
 
     def process_videoframes(self, threadindex, progress) -> None:
         while True:
-            frame = self.frames_queue[threadindex].get()
-            if frame is None:
+            item = self.frames_queue[threadindex].get()
+            if item is None:
                 self.processing_threads -= 1
                 self.processed_queue[threadindex].put((False, None))
                 return
             else:
+                # the read thread tags every frame with its index so the
+                # temporal section can run in true frame order (FrameSequencer)
+                frame_index, frame = item
                 if self.options.frame_processing:
                     for p in self.processors:
                         frame = p.Run(frame)
                     resimg = frame
-                else:                            
-                    resimg = self.process_frame(frame)
+                else:
+                    resimg = self.process_frame(frame, frame_index)
                 self.processed_queue[threadindex].put((True, resimg))
                 del frame
                 progress()
@@ -348,6 +405,8 @@ class ProcessMgr():
         self.video_mode = True
         if self.stabilizer is not None:
             self.stabilizer.reset()
+        if getattr(self, 'sequencer', None) is not None:
+            self.sequencer.reset()
 
         cap = cv2.VideoCapture(source_video)
         # endframe is a COUNT (get_video_frame_total), so the range processed is
@@ -499,11 +558,11 @@ class ProcessMgr():
 
 
 
-    def process_frame(self, frame:Frame):
+    def process_frame(self, frame:Frame, frame_index=None):
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
         temp_frame = frame.copy()
-        num_swapped, temp_frame = self.swap_faces(frame, temp_frame)
+        num_swapped, temp_frame = self.swap_faces(frame, temp_frame, frame_index)
         if num_swapped > 0:
             if roop.globals.no_face_action == eNoFaceAction.SKIP_FRAME_IF_DISSIMILAR:
                 if len(self.input_face_datas) > num_swapped:
@@ -547,7 +606,7 @@ class ProcessMgr():
         
 
 
-    def swap_faces(self, frame, temp_frame):
+    def swap_faces(self, frame, temp_frame, frame_index=None):
         num_faces_found = 0
 
         # temporal smoothing is only safe for sequential video frames
@@ -571,9 +630,12 @@ class ProcessMgr():
                     print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
                 return num_faces_found, frame
 
-            refine_faces_landmark68(frame, [face])
-            if smoothing_on:
-                self.stabilizer.stabilize([face])
+            # ordered: landmark refinement + temporal smoothing must see frames
+            # in real sequence (the swap below stays parallel)
+            with self.sequencer.in_order(frame_index if smoothing_on else None):
+                refine_faces_landmark68(frame, [face])
+                if smoothing_on:
+                    self.stabilizer.stabilize([face])
 
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
@@ -588,9 +650,11 @@ class ProcessMgr():
             if faces is None:
                 return num_faces_found, frame
 
-            refine_faces_landmark68(frame, faces)
-            if smoothing_on:
-                self.stabilizer.stabilize(faces)
+            # ordered: see note above
+            with self.sequencer.in_order(frame_index if smoothing_on else None):
+                refine_faces_landmark68(frame, faces)
+                if smoothing_on:
+                    self.stabilizer.stabilize(faces)
             if self.options.swap_mode == "all":
                 for face in faces:
                     num_faces_found += 1

@@ -143,19 +143,28 @@ def _bbox_iou(a, b):
 def _dedup_faces(collected, iou_thr=0.5):
     """Drop overlapping detections of the same face, keeping the best one.
 
-    Angle-0 wins over any rotated detection, WHATEVER the scores. This is a
-    safeguard, not an oversight: the footage is in its natural orientation, so
-    the angle-0 detection is the truth and the rotated passes exist only as a
-    fallback for faces that are genuinely sideways IN the frame. Ranking purely
-    by score lets a confident rotated detection -- which can be a false positive
-    landing on part of the real face -- outrank the correct angle-0 one; its
-    keypoints then sit clustered together, the similarity fit zooms right in and
-    only the nose area ends up swapped. (Tried and reverted: score bonus.)
+    Angle-0 (upright) detections get a score bonus, `roop.globals.angle0_bonus`:
+      1.0 (default) = angle-0 ALWAYS wins, whatever the scores. Original
+                      behaviour: the footage is upright, so the upright pass is
+                      treated as the truth and rotated passes are only a
+                      fallback for faces that are sideways in the frame.
+      0.10          = angle-0 wins ties and near-ties, but a clearly more
+                      confident rotated detection wins on merit. On a sideways
+                      head the upright pass often scrapes past the threshold
+                      with poor keypoints on some frames and fails on others --
+                      absolute priority makes the alignment flip between the two
+                      every few frames even though the head barely moved.
+      0.0           = pure score, no preference.
+    Ties always fall to angle-0.
     """
+    bonus = float(getattr(roop.globals, 'angle0_bonus', 1.0))
+
     def key(item):
         ang, f = item
         s = float(getattr(f, 'det_score', 0.0) or 0.0)
-        return (0 if ang == 0 else 1, -s)
+        if ang == 0:
+            s += bonus
+        return (-s, 0 if ang == 0 else 1)
     kept = []
     for ang, f in sorted(collected, key=key):
         if any(_bbox_iou(f.bbox, kf.bbox) > iou_thr for kf in kept):
