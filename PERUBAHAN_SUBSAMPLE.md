@@ -78,3 +78,49 @@ process_face dengan swapper tiruan di 128/256/512/768/1024: kelimanya menempel
 di kotak wajah yang sama (x[468..732] y[212..475]), tidak ada lagi penyebaran ke
 seluruh frame; paste_upscale + geometri matte identik antar ukuran; implode/
 explode round-trip 0 selisih; py_compile + build Gradio.
+
+## HOTFIX 2 — layar hitam TERNYATA hanya saat ENHANCER aktif
+Bug yang sama (pembagian integer) ada di TIGA tempat lain yang saya lewatkan:
+`Enhance_GFPGAN.py`, `Enhance_CodeFormer.py`, `Enhance_RestoreFormerPPlus.py`
+semuanya menghitung
+    scale_factor = int(result.shape[1] / input_size)
+Enhancer SELALU mengeluarkan 512, sedangkan input_size = ukuran subsample:
+    128->4  256->2  512->1  768->0  1024->0
+Nilai 0 itu masuk ke paste_upscale sebagai `M_scale = M * 0` -> matriks affine nol
+-> invers degenerate -> layar hitam. Karena itu gejalanya hanya muncul saat
+enhancer ON. Ketiganya diperbaiki jadi pembagian float.
+
+## HOTFIX 3 — blending enhancer meleset di 768/1024
+`IM` dikalibrasi untuk ukuran `upsk_face`. Dengan enhancer, upsk_face = 512
+sedangkan fake_face (swap mentah) = 768/1024; me-warp dua ukuran berbeda dengan
+matriks yang sama membuat wajah non-enhanced ter-zoom dan blending meleset.
+FIX: fake_face di-resize ke ukuran upsk_face sebelum warp.
+Terverifikasi: subsample 512/768/1024 + enhancer -> kotak paste sama
+(x[468..731]) dan nilai blend benar (210 & 90 -> 150).
+
+## TEMUAN PENTING untuk pemakaian (jawaban #1)
+Ketiga enhancer adalah model 512-in/512-out (`cv2.resize(temp_frame,(512,512))`).
+Jadi dengan ENHANCER AKTIF, subsample 768/1024 TIDAK menambah resolusi akhir --
+hasil swap yang 768/1024 justru diturunkan ke 512 oleh enhancer. Biaya
+komputasinya (36x/64x inferensi swap) hampir seluruhnya terbuang.
+  enhancer OFF -> 768/1024 benar-benar menaikkan resolusi keluaran
+  enhancer ON  -> plafon efektif tetap 512; pakai 512 saja
+
+## Concurrency preview dinaikkan
+6 event preview: `concurrency_limit` 1 -> 3 (concurrency_id "preview" dan
+trigger_mode "always_last" tetap). Batas 1 menyerialkan setiap perubahan setting
+sehingga preview terasa lambat; batas 3 mengizinkan tumpang tindih terbatas tapi
+tetap mencegah 6 swap GPU berjalan sekaligus (penyebab "error connecting" dulu).
+Bila "error connecting" muncul lagi, turunkan ke 2.
+
+## Enhancer selalu 512 -- terbukti dari kode
+`Enhance_*.Run()` baris pertama: `input_size = temp_frame.shape[1]` lalu
+`cv2.resize(temp_frame, (512,512))`. Modelnya 512-in/512-out, jadi APA PUN
+ukuran masuknya, keluarnya 512:
+    subsample 128  -> enhancer menaikkan 128 -> 512   (menguntungkan)
+    subsample 256  -> menaikkan 256 -> 512            (menguntungkan)
+    subsample 512  -> pas, tanpa resize
+    subsample 768  -> MENURUNKAN 768 -> 512           (detail dibuang)
+    subsample 1024 -> MENURUNKAN 1024 -> 512          (detail dibuang)
+Jadi 768/1024 + enhancer BUKAN tidak bisa (sudah tidak layar hitam lagi), tapi
+sia-sia: biaya swap 36x/64x dibayar lalu hasilnya diturunkan ke 512 oleh enhancer.

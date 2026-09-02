@@ -1064,6 +1064,14 @@ class ProcessMgr():
         img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1]) 
         paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
         if upsk_face is not fake_face:
+            # IM is calibrated for upsk_face's size. With an enhancer the enhanced
+            # face is 512 (all three enhancer models are 512-in/512-out) while the
+            # un-enhanced swap can be 768/1024, and warping a differently-sized
+            # image with the same matrix lands it zoomed and misaligned. Match the
+            # sizes before warping so the blend actually overlaps.
+            if fake_face.shape[:2] != upsk_face.shape[:2]:
+                fake_face = cv2.resize(fake_face, (upsk_face.shape[1], upsk_face.shape[0]),
+                                       interpolation=cv2.INTER_AREA)
             fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
             paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
 

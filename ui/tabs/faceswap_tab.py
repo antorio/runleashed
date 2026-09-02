@@ -217,7 +217,7 @@ def faceswap_tab():
     # preview kept showing the OLD source face until some other event refreshed
     # it. .then() runs unconditionally after the select, so the preview always
     # re-renders with the newly selected source face.
-    input_faces.select(on_select_input_face, None, None).then(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")
+    input_faces.select(on_select_input_face, None, None).then(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")
     
     bt_remove_selected_input_face.click(fn=remove_selected_input_face, outputs=[input_faces])
     bt_srcfiles.change(fn=on_srcfile_changed, show_progress='full', inputs=bt_srcfiles, outputs=[dynamic_face_selection, face_selection, input_faces, bt_srcfiles])
@@ -234,8 +234,8 @@ def faceswap_tab():
     bt_remove_selected_target_face.click(fn=remove_selected_target_face, outputs=[target_faces])
 
     forced_fps.change(fn=on_fps_changed, inputs=[forced_fps], show_progress='hidden')
-    bt_destfiles.change(fn=on_destfiles_changed, inputs=[bt_destfiles], outputs=[preview_frame_num, text_frame_clip], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")
-    bt_destfiles.select(fn=on_destfiles_selected, outputs=[preview_frame_num, text_frame_clip, forced_fps], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")
+    bt_destfiles.change(fn=on_destfiles_changed, inputs=[bt_destfiles], outputs=[preview_frame_num, text_frame_clip], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")
+    bt_destfiles.select(fn=on_destfiles_selected, outputs=[preview_frame_num, text_frame_clip, forced_fps], show_progress='hidden').success(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")
     bt_destfiles.clear(fn=on_clear_destfiles, outputs=[target_faces, selected_face_detection])
     resultfiles.select(fn=on_resultfiles_selected, inputs=[resultfiles], outputs=[resultimage, resultvideo])
 
@@ -268,10 +268,10 @@ def faceswap_tab():
     # responsive even while the queue is busy.
     bt_stop.click(fn=stop_swap, outputs=[bt_start, bt_stop], queue=False)
 
-    bt_refresh_preview.click(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")            
+    bt_refresh_preview.click(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")            
     bt_toggle_masking.click(fn=on_toggle_masking, inputs=[previewimage, maskimage], outputs=[previewimage, maskimage])            
-    fake_preview.change(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")
-    preview_frame_num.release(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=1, concurrency_id="preview")
+    fake_preview.change(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")
+    preview_frame_num.release(fn=on_preview_frame_changed, inputs=previewinputs, outputs=previewoutputs, show_progress='hidden', trigger_mode="always_last", concurrency_limit=3, concurrency_id="preview")
     bt_use_face_from_preview.click(fn=on_use_face_from_selected, show_progress='full', inputs=[bt_destfiles, preview_frame_num], outputs=[dynamic_face_selection, face_selection, target_faces, selected_face_detection])
     set_frame_start.click(fn=on_set_frame, inputs=[set_frame_start, preview_frame_num], outputs=[text_frame_clip])
     set_frame_end.click(fn=on_set_frame, inputs=[set_frame_end, preview_frame_num], outputs=[text_frame_clip])

@@ -61,7 +61,12 @@ class Enhance_CodeFormer():
 
         result = cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
         result = (result * 255.0).round()
-        scale_factor = int(result.shape[1] / input_size)       
+        # float, not int: the enhancer always outputs 512, so with a swap
+        # crop larger than that (subsample 768/1024) int() truncated the
+        # ratio to 0. paste_upscale then does M_scale = M * scale_factor,
+        # zeroing the whole affine matrix -> degenerate inverse -> the
+        # swap smeared over the frame / rendered black.
+        scale_factor = float(result.shape[1]) / float(input_size)
         return result.astype(np.uint8), scale_factor
 
 
