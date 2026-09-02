@@ -1107,14 +1107,22 @@ class ProcessMgr():
         mask_size = int(np.sqrt(mask_h*mask_w))
         # Calculate the kernel size for eroding img_matte by kernel (insightface empirical guess for best size was max(mask_size//10,10))
         # k = max(mask_size//12, 8)
-        k = max(mask_size//(blur_amount // 2) , blur_amount // 2)
+        # Erosion and feather used to share ONE number, and inverted at that:
+        # k(erosion) = mask_size//(blur_amount//2) and k(blur) = mask_size//blur_amount,
+        # so raising "Blur size" SHRANK the feather (30->15->10 px) while lowering
+        # it doubled the erosion (30->60 px). Wanting a softer seam without losing
+        # swap area was therefore impossible. They are decoupled now:
+        #   erosion  -> fixed base kernel + the separate Erosion (iterations) slider
+        #   feather  -> scales with "Blur size", monotonically
+        # blur_amount == 20 (the default) reproduces the old numbers exactly.
+        k = max(mask_size // 10, 10)
         kernel = np.ones((k,k),np.uint8)
         # Pad with BORDER_REPLICATE before eroding/blurring. Without it the area
         # outside the image counts as background, so a face touching the edge of
         # the frame is eroded inward from that edge as well -- the swap then
         # fades out before the picture border. Replicating keeps the edge value,
         # so only REAL mask borders are feathered. The pad is removed at the end.
-        k2 = max(mask_size//blur_amount, blur_amount//5)
+        k2 = max((mask_size * int(blur_amount)) // 400, 4)
         pad = int(k * max(1, num_erosion_iterations) + 2 * k2 + 4)
         img_matte = cv2.copyMakeBorder(img_matte, pad, pad, pad, pad, cv2.BORDER_REPLICATE)
         img_matte = cv2.erode(img_matte,kernel,iterations = num_erosion_iterations)

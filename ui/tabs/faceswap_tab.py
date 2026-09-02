@@ -93,7 +93,7 @@ def faceswap_tab():
                         mask_right = gr.Slider(0, 1.0, value=0, label="Offset Right", step=0.01, interactive=True)
                     with gr.Row():
                         mask_erosion = gr.Slider(1.0, 3.0, value=1.0, label="Erosion", step=1.00, interactive=True)
-                        mask_blur = gr.Slider(10.0, 50.0, value=20.0, label="Blur size", step=1.00, interactive=True)
+                        mask_blur = gr.Slider(4.0, 100.0, value=20.0, label="Blur size", info='edge softness only; does not shrink the swap', step=1.00, interactive=True)
                     with gr.Row():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
@@ -160,7 +160,7 @@ def faceswap_tab():
                     fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
 
                 with gr.Accordion(label="Enhancement", open=True):
-                    ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px"], value="256px", label="Subsample upscale to", interactive=True)
+                    ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px", "768px", "1024px"], value="256px", label="Subsample upscale to", interactive=True)
                     ui.globals.ui_selected_enhancer = gr.Dropdown(["None", "Codeformer", "GFPGAN", "Restoreformer++"], value="None", label="Select post-processing")
                     ui.globals.ui_blend_ratio = gr.Slider(0.0, 1.0, value=0.65, label="Original/Enhanced image blend ratio", info="Only used with active post-processing")
 
@@ -552,7 +552,8 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = auto_rotate
-    roop.globals.subsample_size = int(upsample[:3])
+    # strip the 'px' suffix instead of slicing 3 chars: '1024px'[:3] == '102'
+    roop.globals.subsample_size = int(str(upsample).lower().replace('px', '').strip())
 
 
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
@@ -720,7 +721,8 @@ def start_swap( swap_model, enhancer, detection, keep_frames, wait_after_extract
     roop.globals.no_face_action = index_of_no_face_action(no_face_action)
     roop.globals.vr_mode = vr_mode
     roop.globals.autorotate_faces = autorotate
-    roop.globals.subsample_size = int(upsample[:3])
+    # strip the 'px' suffix instead of slicing 3 chars: '1024px'[:3] == '102'
+    roop.globals.subsample_size = int(str(upsample).lower().replace('px', '').strip())
     mask_engine = map_mask_engine(selected_mask_engine, clip_text)
 
     if roop.globals.face_swap_mode == 'selected':
