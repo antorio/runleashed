@@ -951,15 +951,26 @@ class ProcessMgr():
             if _prof:
                 print(f"[timing]    processor '{p.processorname}' ({p.type}) = {(_pt.perf_counter()-_ps)*1000:.0f}ms")
 
-        upscale = 512
+        # Paste-back working size. 512 is the floor: a small swap (128/256) is
+        # upscaled first so the warp back into the frame is smooth instead of
+        # blocky. It must NOT be a ceiling -- with a hard 512 a 768/1024 subsample
+        # was resized back DOWN to 512, throwing away exactly the resolution it
+        # was computed for.
         orig_width = fake_frame.shape[1]
+        upscale = max(512, orig_width)
         if orig_width != upscale:
             fake_frame = cv2.resize(fake_frame, (upscale, upscale), interpolation=cv2.INTER_CUBIC)
         mask_offsets = (0,0,0,0,1,20) if inputface is None else inputface.mask_offsets
 
         
         if enhanced_frame is None:
-            scale_factor = int(upscale / orig_width)
+            # float, not int: this is the ratio between the paste-back size and
+            # the swap size. int() truncated it to 0 for any subsample larger
+            # than `upscale` (768 -> int(512/768) = 0), and paste_upscale does
+            # `M_scale = M * scale_factor`, so the whole affine matrix became
+            # zeros -> invertAffineTransform produced a degenerate transform that
+            # smeared the paste across the entire frame == the black screen.
+            scale_factor = float(upscale) / float(orig_width)
             result = self.paste_upscale(fake_frame, fake_frame, target_face.matrix, frame, scale_factor, mask_offsets, target_face)
         else:
             result = self.paste_upscale(fake_frame, enhanced_frame, target_face.matrix, frame, scale_factor, mask_offsets, target_face)
