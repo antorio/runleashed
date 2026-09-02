@@ -36,3 +36,25 @@ info singkat "edge softness only; does not shrink the swap".
 ## Cara pakai
 Garis tipis di pipi -> naikkan "Blur size" (coba 40, lalu 60). Area swap tetap.
 Kalau swap perlu dipersempit -> pakai slider "Erosion", bukan Blur size.
+
+## Lanjutan: Erosion & Blur size jadi GLOBAL
+Masalah yang dilaporkan user: kedua nilai ini tersimpan per SOURCE FACE
+(`faceset.faces[0].mask_offsets[4]/[5]`), TAPI tidak ada satu pun handler yang
+membaca-balik nilainya saat source face diganti. Jadi slider selalu menampilkan
+angka terakhir yang digeser, apa pun face yang sedang dipilih -- user tak punya
+cara tahu setting mana yang sedang berlaku. Lebih buruk: `set_mask_offset()`
+diam-diam TIDAK melakukan apa pun bila belum ada source face dimuat.
+
+FIX: keduanya dipindah ke globals (`mask_erosion_iterations`, `mask_blur_size`).
+Ini memang tempat yang benar: erosi/feather menggambarkan cara swap DIBAURKAN ke
+target, bukan properti source face. `paste_upscale` kini membaca globals; indeks
+4/5 pada mask_offsets tidak lagi dipakai (nol referensi tersisa).
+
+Layout: info-text di bawah "Blur size" dihapus sehingga bentuknya sama persis
+dengan "Erosion" di sebelahnya (info-text itulah yang membuat tinggi kedua
+kontrol tidak sejajar). Nilai awal kedua slider kini dibaca dari globals.
+
+Validasi: globals default 1/20; handler menulis ke globals bukan ke faceset;
+setting berlaku MESKI belum ada source face (transisi 7px -> 34px untuk blur
+10 -> 60); mask_offsets[4]/[5] terbukti diabaikan (dua nilai berbeda memberi
+hasil identik); build Gradio OK; slider Blur size tak lagi punya info-text.

@@ -92,8 +92,8 @@ def faceswap_tab():
                         mask_left = gr.Slider(0, 1.0, value=0, label="Offset Left", step=0.01, interactive=True)
                         mask_right = gr.Slider(0, 1.0, value=0, label="Offset Right", step=0.01, interactive=True)
                     with gr.Row():
-                        mask_erosion = gr.Slider(1.0, 3.0, value=1.0, label="Erosion", step=1.00, interactive=True)
-                        mask_blur = gr.Slider(4.0, 100.0, value=20.0, label="Blur size", info='edge softness only; does not shrink the swap', step=1.00, interactive=True)
+                        mask_erosion = gr.Slider(1.0, 3.0, value=lambda a='mask_erosion_iterations': getattr(roop.globals, a), label="Erosion", step=1.00, interactive=True)
+                        mask_blur = gr.Slider(4.0, 100.0, value=lambda a='mask_blur_size': getattr(roop.globals, a), label="Blur size", step=1.00, interactive=True)
                     with gr.Row():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
@@ -304,10 +304,11 @@ def on_mask_left_changed(mask_offset):
 def on_mask_right_changed(mask_offset):
     set_mask_offset(3, mask_offset)
 
-def on_mask_erosion_changed(mask_offset):
-    set_mask_offset(4, mask_offset)
-def on_mask_blur_changed(mask_offset):
-    set_mask_offset(5, mask_offset)
+def on_mask_erosion_changed(value):
+    roop.globals.mask_erosion_iterations = int(value)
+
+def on_mask_blur_changed(value):
+    roop.globals.mask_blur_size = int(value)
 
 
 def set_mask_offset(index, mask_offset):

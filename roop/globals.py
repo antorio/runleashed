@@ -27,6 +27,13 @@ headless = None
 log_level = 'error'
 selected_enhancer = None
 subsample_size = 128
+# Mask edge treatment. GLOBAL, not per source face: these describe how the swap
+# is blended into the target, not a property of the source. They used to live in
+# each faceset's mask_offsets, but the sliders never reloaded when you switched
+# source face -- so they showed the last value you dragged regardless of which
+# face was selected, and silently did nothing when no source face was loaded.
+mask_erosion_iterations = 1     # how much the matte is shrunk (area)
+mask_blur_size = 20             # edge softness only (does not shrink the area)
 face_swap_mode = None
 blend_ratio = 0.5
 distance_threshold = 0.65

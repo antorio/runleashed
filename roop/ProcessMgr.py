@@ -1036,7 +1036,10 @@ class ProcessMgr():
         # frame" whenever a face sits against the side of the shot). blur_area
         # now replicates the border while eroding, so a matte that legitimately
         # touches the frame edge keeps reaching it.
-        img_matte = self.blur_area(img_matte, mask_offsets[4], mask_offsets[5])
+        # erosion / feather are global settings now (see roop/globals.py)
+        img_matte = self.blur_area(img_matte,
+                                   int(getattr(roop.globals, 'mask_erosion_iterations', 1)),
+                                   int(getattr(roop.globals, 'mask_blur_size', 20)))
         #Normalize images to float values and reshape
         img_matte = img_matte.astype(np.float32)/255
         face_matte = face_matte.astype(np.float32)/255
