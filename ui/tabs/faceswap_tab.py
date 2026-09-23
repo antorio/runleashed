@@ -546,6 +546,15 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     if not fake_preview or len(roop.globals.INPUT_FACESETS) < 1:
         return gr.Image(value=util.convert_to_gradio_preview(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
+    if is_processing:
+        # The preview shares ProcessMgr and these globals with the running
+        # render: swapping here would re-initialise the render's processors,
+        # stabilizer and frame sequencer mid-video (and write this panel's
+        # values into globals the render reads per frame). Show the frame
+        # unswapped until the render has finished.
+        gr.Info('Preview swap is paused while a render is running')
+        return gr.Image(value=util.convert_to_gradio_preview(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
+
     roop.globals.face_swap_mode = translate_swap_mode(detection)
     roop.globals.selected_enhancer = enhancer
     roop.globals.distance_threshold = face_distance
