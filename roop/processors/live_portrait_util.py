@@ -35,6 +35,12 @@ def _clamp_mag():
 EXP_IDX_EYES = [11, 13, 15, 16, 18]
 EXP_IDX_MOUTH = [6, 12, 14, 17, 19, 20]
 EXP_IDX_BROWS = [1, 2]
+# Keypoints FaceFusion's expression restorer never takes from the target: they
+# are not part of any expression area there (restrict_expression_areas). Here
+# they are transferred with the areas above -- a candidate for pulling the
+# swapped face's structure back toward the target. Kept from the swapped face
+# when roop.globals.expression_keep_structure is on.
+EXP_IDX_STRUCTURE = [0, 4, 5, 8, 9]
 
 
 def headpose_pred_to_degree(pred):
@@ -135,6 +141,8 @@ def build_applied_expression(temp_exp, target_exp, factor, use_eyes, use_mouth, 
         reset(EXP_IDX_MOUTH)
     if not use_brows:
         reset(EXP_IDX_BROWS)
+    if getattr(roop.globals, 'expression_keep_structure', False):
+        reset(EXP_IDX_STRUCTURE)
 
     return limit_expression(blended)
 

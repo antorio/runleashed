@@ -41,6 +41,18 @@ mask_blur_size = 20             # edge softness only (does not shrink the area)
 # bottom edge ignores Erosion / Blur size and fades out over the last 6% of the
 # crop instead; the top and side edges are unchanged.
 mask_bottom_to_chin = False
+# Build the paste matte in the face crop's own coordinates (A/B toggle; False =
+# the old frame-pixel erosion). The old erosion used an axis-aligned kernel sized
+# from the bounding box, so tilted faces were eroded ~75% deeper at 25 degrees.
+mask_face_aligned = False
+
+# Identity strength, 0-1 (0 = off): push the source identity away from the
+# target's own identity before it conditions inswapper (see FaceSwapInsightFace).
+identity_strength = 0.0
+# Face shape from the source, 0-1 (0 = off): warp the target's jaw / chin toward
+# the source's before swapping (see roop/face_shape.py). Runs buffalo_l's 68-pt
+# 3D landmark model on every face while on.
+face_shape_strength = 0.0
 face_swap_mode = None
 blend_ratio = 0.5
 distance_threshold = 0.65
@@ -137,6 +149,13 @@ expression_clamp = 0.0
 # Amplify the driving expression delta. 1.0 = natural target amount; try 2.0-3.0
 # to make subtle expressions clearly visible (may add artifacts if pushed high).
 expression_power = 1.0             # multiplier on the delta; 1.0 = target amount
+# Preview / frame slider: read new frames from a re-encoded copy of the target
+# video with a keyframe every 8 frames (made in the background when the video
+# is selected). Renders and the face pickers always read the original.
+preview_seek_copy = True
+# Keep LivePortrait keypoints 0, 4, 5, 8, 9 from the swapped face (FaceFusion
+# never transfers them). A/B toggle for likeness with the restorer on.
+expression_keep_structure = False
 # Temporal smoothing of the LivePortrait expression vector (video wobble fix).
 # Absorbs per-frame noise in the ER expression while still following real
 # expression changes. Single control: strength (0 = off). Read live each frame.

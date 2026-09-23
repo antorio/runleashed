@@ -39,10 +39,35 @@ class FaceSwapInsightFace():
 
 
 
-    def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
-        latent = source_face.normed_embedding.reshape((1,-1))
-        latent = np.dot(latent, self.emap)
+    def identity_latent(self, source_face: Face, target_face: Face):
+        """inswapper's source input: the source identity projected through emap.
+
+        Identity strength (roop.globals.identity_strength, 0 = off) pushes the
+        source identity away from the target's own identity before projecting:
+            e = normalize(src + w * (src - tgt))
+        inswapper keeps part of the target's identity in its output; steering
+        the conditioning away from it strengthens the source (inner face). Both
+        vectors are unit ArcFace embeddings, i.e. the same space. tgt is the
+        target's embedding smoothed over the video (identity_ref, set by the
+        landmark stabilizer) when available, so the push does not flicker."""
+        e = np.asarray(source_face.normed_embedding, dtype=np.float32).reshape(1, -1)
+        w = float(getattr(roop.globals, 'identity_strength', 0.0) or 0.0)
+        if w > 0.0 and target_face is not None:
+            t = target_face.get('identity_ref')
+            if t is None:
+                t = target_face.get('embedding')
+            if t is not None:
+                t = np.asarray(t, dtype=np.float32).reshape(1, -1)
+                t = t / (np.linalg.norm(t) + 1e-9)
+                e = e + w * (e - t)
+                e = e / (np.linalg.norm(e) + 1e-9)
+        latent = np.dot(e, self.emap)
         latent /= np.linalg.norm(latent)
+        return latent.astype(np.float32)
+
+
+    def Run(self, source_face: Face, target_face: Face, temp_frame: Frame) -> Frame:
+        latent = self.identity_latent(source_face, target_face)
         io_binding = self.model_swap_insightface.io_binding()           
         io_binding.bind_cpu_input("target", temp_frame)
         io_binding.bind_cpu_input("source", latent)

@@ -140,3 +140,89 @@ class LandmarkStabilizer:
                     pass
         return faces
 
+
+
+class TargetTracks:
+    """Per-face running averages over a video that the likeness options need:
+    the target's identity embedding (identity strength) and its face shape in
+    the reference frame (face shape). Both describe the PERSON, not the frame,
+    so averaging them along the face's track keeps the effects from flickering.
+
+    Separate from LandmarkStabilizer on purpose: it never touches landmarks,
+    and it runs whether landmark smoothing is on or not. Must be fed frames in
+    order (it is called inside the frame sequencer's ordered section).
+
+    Writes face['identity_ref'], face['shape_canon'] and face['shape_gate'].
+    """
+
+    def __init__(self, match_frac: float = 0.6, max_age: int = 8,
+                 min_rate: float = 0.05, cut_similarity: float = 0.5):
+        self.match_frac = match_frac
+        self.max_age = max_age
+        self.min_rate = min_rate              # slowest update (after ~20 frames)
+        self.cut_similarity = cut_similarity  # below: another person, restart
+        self.tracks = []
+        self._lock = Lock()
+
+    def reset(self):
+        with self._lock:
+            self.tracks = []
+
+    def _match(self, center, size):
+        best, best_d = None, 1e18
+        for t in self.tracks:
+            d = float(np.hypot(*(center - t['center'])))
+            if d < self.match_frac * size and d < best_d:
+                best_d, best = d, t
+        return best
+
+    def update(self, faces, identity=True, shape=True):
+        if not faces:
+            return faces
+        canonical = landmarks3d = gate_of = None
+        if shape:
+            from roop.face_shape import canonical, gate_of, landmarks3d
+        with self._lock:
+            for t in self.tracks:
+                t['age'] += 1
+            self.tracks = [t for t in self.tracks if t['age'] <= self.max_age]
+            for f in faces:
+                bbox = np.asarray(f.bbox, dtype=np.float32)
+                size = float(max(bbox[2] - bbox[0], bbox[3] - bbox[1])) + 1e-6
+                center = np.array([(bbox[0] + bbox[2]) * 0.5,
+                                   (bbox[1] + bbox[3]) * 0.5], dtype=np.float32)
+                emb = LandmarkStabilizer._get(f, 'embedding')
+                if emb is not None:
+                    emb = emb.astype(np.float32).reshape(-1)
+                    emb = emb / (np.linalg.norm(emb) + 1e-9)
+                t = self._match(center, size)
+                if t is None:
+                    t = {'n': 0, 'emb': None, 'shape': None, 'gate': None}
+                    self.tracks.append(t)
+                elif emb is not None and t['emb'] is not None \
+                        and float(t['emb'] @ emb) < self.cut_similarity:
+                    t.update(n=0, emb=None, shape=None, gate=None)   # a cut to someone else: start over
+                t['center'], t['age'] = center, 0
+                t['n'] += 1
+                # running mean for the first frames, then a slow EMA
+                a = max(1.0 / t['n'], self.min_rate)
+                if emb is not None:
+                    e = emb if t['emb'] is None else (1.0 - a) * t['emb'] + a * emb
+                    t['emb'] = e / (np.linalg.norm(e) + 1e-9)
+                if shape:
+                    L3 = landmarks3d(f)
+                    if L3 is not None:
+                        c = canonical(L3)
+                        t['shape'] = c if t['shape'] is None else (1.0 - a) * t['shape'] + a * c
+                        # the pose fade follows the head, only a little calmer
+                        g = gate_of(L3)
+                        t['gate'] = g if t['gate'] is None else 0.7 * t['gate'] + 0.3 * g
+                try:
+                    if identity and t['emb'] is not None:
+                        f['identity_ref'] = t['emb'].copy()
+                    if shape and t['shape'] is not None:
+                        f['shape_canon'] = t['shape'].copy()
+                        f['shape_gate'] = t['gate']
+                except Exception:
+                    pass
+        return faces

@@ -50,7 +50,7 @@ def create_gif_from_video(video_path: str, gif_path):
     from roop.capturer import get_video_frame, release_video
 
     fps = util.detect_fps(video_path)
-    frame = get_video_frame(video_path)
+    frame = get_video_frame(video_path, exact=True)
     release_video()
 
     scalex = frame.shape[0]

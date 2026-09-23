@@ -171,12 +171,16 @@ def refine_faces_landmark68(frame, faces):
             pts, score = lm.detect(frame, bbox)
             if pts is None or pts.shape[0] != 68:
                 continue
-            # z is filled with zeros: 2dfan4 is a 2D landmarker, and NOTHING in
-            # the pipeline reads the z column (landmark_68_to_5 takes [:, :2] and
-            # the stabilizer leaves z untouched). buffalo_l's 1k3d68 is no longer
-            # requested at all while 2dfan4 is on, so there is no z to preserve --
-            # keeping the 3-column shape only for compatibility.
+            # z is filled with zeros: 2dfan4 is a 2D landmarker, and nothing that
+            # reads landmark_3d_68 uses the z column (landmark_68_to_5 takes
+            # [:, :2] and the stabilizer leaves z untouched). buffalo_l's 1k3d68
+            # runs alongside 2dfan4 only for face shape (kept below).
             z = np.zeros((68, 1), dtype=np.float32)
+            # face shape from the source compares 3D shapes: it asks for
+            # buffalo's 68 points (with depth) and reads this copy of them
+            prev = f.get('landmark_3d_68') if hasattr(f, 'get') else None
+            if prev is not None:
+                f['landmark_3d_68_buffalo'] = prev
             f['landmark_3d_68'] = np.concatenate([pts.astype(np.float32), z], axis=1)
             if dbg:
                 print(f"[hi-landmarker] refined 68pts (score={score:.2f})")

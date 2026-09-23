@@ -241,7 +241,7 @@ def extract_face_images(source_filename, video_info, extra_padding=-1.0, use_mul
     source_image = None
 
     if video_info[0]:
-        frame = get_video_frame(source_filename, video_info[1])
+        frame = get_video_frame(source_filename, video_info[1], exact=True)
         if frame is not None:
             source_image = frame
         else:

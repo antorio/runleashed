@@ -5,7 +5,7 @@ import roop.utilities as util
 import roop.globals
 import ui.globals
 from roop.face_util import extract_face_images, create_blank_image
-from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame
+from roop.capturer import get_video_frame, get_video_frame_total, get_image_frame, prepare_seek_copy
 from roop.ProcessEntry import ProcessEntry
 from roop.ProcessOptions import ProcessOptions
 from roop.FaceSet import FaceSet
@@ -94,7 +94,9 @@ def faceswap_tab():
                     with gr.Row():
                         mask_erosion = gr.Slider(1.0, 3.0, value=lambda a='mask_erosion_iterations': getattr(roop.globals, a), label="Erosion", step=1.00, interactive=True)
                         mask_blur = gr.Slider(4.0, 100.0, value=lambda a='mask_blur_size': getattr(roop.globals, a), label="Blur size", step=1.00, interactive=True)
-                    chk_mask_to_chin = gr.Checkbox(label="Extend swap to the chin", info="Bottom edge ignores Erosion / Blur size", value=lambda a='mask_bottom_to_chin': getattr(roop.globals, a), interactive=True)
+                    with gr.Row():
+                        chk_mask_to_chin = gr.Checkbox(label="Extend swap to the chin", info="Bottom edge ignores Erosion / Blur size", value=lambda a='mask_bottom_to_chin': getattr(roop.globals, a), interactive=True)
+                        chk_mask_aligned = gr.Checkbox(label="Face-aligned mask edges", info="Tilted faces get the same edges as upright ones", value=lambda a='mask_face_aligned': getattr(roop.globals, a), interactive=True)
                     with gr.Row():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
@@ -131,6 +133,8 @@ def faceswap_tab():
                 with gr.Accordion(label="Face selection", open=True):
                     selected_face_detection = gr.Dropdown(swap_choices, value="First found", show_label=False)
                     num_swap_steps = gr.Slider(1, 5, value=1, step=1.0, label="Number of swapping steps")
+                    fs_identity = gr.Slider(0.0, 1.0, value=lambda a='identity_strength': getattr(roop.globals, a), step=0.05, label="Identity strength", info="Pushes the source identity away from the target's. 0 = off", interactive=True)
+                    fs_face_shape = gr.Slider(0.0, 1.0, value=lambda a='face_shape_strength': getattr(roop.globals, a), step=0.05, label="Face shape from source (jaw / chin)", info="Moves the target's jaw / chin to the source's shape before swapping. 0 = off", interactive=True)
                     max_face_distance = gr.Slider(0.01, 1.0, value=0.65, label="Max Face Similarity Threshold", info="0.0 = identical 1.0 = no similarity")
 
                 with gr.Accordion(label="Alignment & stabilization", open=False):
@@ -159,6 +163,7 @@ def faceswap_tab():
                     fs_expr_power = gr.Slider(0.0, 5.0, value=lambda a='expression_power': getattr(roop.globals, a), step=0.1, label="Expression power", interactive=True)
                     fs_pose_lock = gr.Checkbox(label="Pose lock (adaptive)", value=lambda a='expression_pose_lock': getattr(roop.globals, a), interactive=True)
                     fs_pose_gate = gr.Checkbox(label="Pose gate (skip restorer at extreme angles)", value=lambda a='expression_pose_gate': getattr(roop.globals, a), interactive=True)
+                    fs_keep_structure = gr.Checkbox(label="Keep source face structure", info="Restores expression only, like FaceFusion (keypoints 0, 4, 5, 8, 9 stay from the swap)", value=lambda a='expression_keep_structure': getattr(roop.globals, a), interactive=True)
 
                 with gr.Accordion(label="Enhancement", open=True):
                     ui.globals.ui_upscale = gr.Dropdown(["128px", "256px", "512px", "768px", "1024px"], value="256px", label="Subsample upscale to", interactive=True)
@@ -195,6 +200,8 @@ def faceswap_tab():
         (fs_pose_lock, 'expression_pose_lock'),
         (fs_pose_gate, 'expression_pose_gate'),
         (chk_mask_to_chin, 'mask_bottom_to_chin'),
+        (chk_mask_aligned, 'mask_face_aligned'),
+        (fs_keep_structure, 'expression_keep_structure'),
     ]
     for _c, _n in _fs_toggles:
         _c.change(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_c], outputs=[])
@@ -203,6 +210,8 @@ def faceswap_tab():
         (fs_lmk_deadzone, 'landmark_smoothing_deadzone'),
         (fs_es, 'expression_smoothing_strength'),
         (fs_expr_power, 'expression_power'),
+        (fs_identity, 'identity_strength'),
+        (fs_face_shape, 'face_shape_strength'),
     ]
     for _s, _n in _fs_sliders:
         _s.release(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_s], outputs=[])
@@ -391,12 +400,14 @@ def on_srcfile_changed(srcfiles, progress=gr.Progress()):
             progress(0, desc="Retrieving faces from image")      
             roop.globals.source_path = source_path
             SELECTION_FACES_DATA = extract_face_images(roop.globals.source_path,  (False, 0))
+            source_image = get_image_frame(source_path)
             progress(0.5, desc="Retrieving faces from image")
             for f in SELECTION_FACES_DATA:
                 face_set = FaceSet()
                 face = f[0]
                 face.mask_offsets = (0,0,0,0,1,20)
                 face_set.faces.append(face)
+                face_set.ref_images.append(source_image)
                 image = util.convert_to_gradio(f[1])
                 ui.globals.ui_input_thumbs.append(image)
                 roop.globals.INPUT_FACESETS.append(face_set)
@@ -525,6 +536,8 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
         return None,None, gr.Slider(info=timeinfo)
 
     filename = files[selected_preview_index].name
+    import time as _time
+    t_start = _time.perf_counter()
     if util.is_video(filename) or filename.lower().endswith('gif'):
         current_frame = get_video_frame(filename, frame_num)
         if current_video_fps == 0:
@@ -579,10 +592,17 @@ def on_preview_frame_changed(swap_model, frame_num, files, fake_preview, enhance
     options = ProcessOptions(swap_model, get_processing_plugins(mask_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
                               roop.globals.face_swap_mode, face_index, clip_text, maskimage, num_steps, roop.globals.subsample_size, show_face_area, restore_original_mouth, restore_original_eyes=restore_original_eyes)
 
+    t_swap = _time.perf_counter()
     current_frame = live_swap(current_frame, options)
     if current_frame is None:
         return gr.Image(visible=True), None, gr.Slider(info=timeinfo)
-    return gr.Image(value=util.convert_to_gradio_preview(current_frame), visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
+    t_done = _time.perf_counter()
+    preview = util.convert_to_gradio_preview(current_frame)
+    # Server-side time of this preview. If the preview takes much longer than
+    # 'total' to appear in the browser, the rest is the tunnel / network.
+    print(f'[preview] frame {frame_num}: load {(t_swap - t_start) * 1000:.0f} ms | swap {(t_done - t_swap) * 1000:.0f} ms | '
+          f'total {(_time.perf_counter() - t_start) * 1000:.0f} ms')
+    return gr.Image(value=preview, visible=True), gr.ImageEditor(visible=False), gr.Slider(info=timeinfo)
 
 def map_mask_engine(selected_mask_engine, clip_text):
     if selected_mask_engine == "Clip2Seg":
@@ -825,6 +845,8 @@ def on_destfiles_changed(destfiles):
             gr.Warning(f"Corrupted video {filename}, can't detect number of frames!")
         else:
             current_video_fps = util.detect_fps(filename)
+            if util.is_video(filename):
+                prepare_seek_copy(filename)
     else:
         total_frames = 1
     list_files_process[idx].endframe = total_frames
@@ -844,6 +866,8 @@ def on_destfiles_selected(evt: gr.SelectData):
     if util.is_video(filename) or filename.lower().endswith('gif'):
         total_frames = get_video_frame_total(filename)
         current_video_fps = util.detect_fps(filename)
+        if util.is_video(filename):
+            prepare_seek_copy(filename)
         if list_files_process[idx].endframe == 0:
             list_files_process[idx].endframe = total_frames 
     else:

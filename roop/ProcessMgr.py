@@ -8,7 +8,7 @@ from roop.ProcessOptions import ProcessOptions
 from roop.face_util import get_first_face, get_first_face_multi, get_all_faces_multi, rotate_anticlockwise, rotate_clockwise, clamp_cut_values
 from roop.landmark68 import refine_faces_landmark68
 from roop.utilities import compute_cosine_distance, get_device, str_to_class, shuffle_array
-from roop.face_stabilizer import LandmarkStabilizer
+from roop.face_stabilizer import LandmarkStabilizer, TargetTracks
 
 from typing import Any, List, Callable
 from roop.typing import Frame, Face
@@ -233,6 +233,8 @@ class ProcessMgr():
             strength=roop.globals.landmark_smoothing_strength,
             deadzone_frac=getattr(roop.globals, 'landmark_smoothing_deadzone', 0.0)
         )
+        # running identity / face-shape averages for the likeness options
+        self.target_tracks = TargetTracks()
         # NOTE: the One-Euro smoothing of the alignment matrix M (batch 2/3) was
         # REMOVED entirely: even with a pixel deadband it produced visible
         # micro-jitter on footage whose alignment was already steady (user
@@ -252,8 +254,12 @@ class ProcessMgr():
         # In both cases running 1k3d68 on every face of every frame is inference
         # that is paid for and thrown away.
         analysis_modules = ["landmark_2d_106", "detection", "recognition", "genderage"]
-        if (getattr(roop.globals, 'use_landmark_alignment', True)
-                and not getattr(roop.globals, 'use_hi_landmarker', False)):
+        align_68 = getattr(roop.globals, 'use_landmark_alignment', True)
+        hi_68 = getattr(roop.globals, 'use_hi_landmarker', False)
+        # face shape from the source compares shapes in 3D: it always needs
+        # buffalo's 68 points (with depth), 2dfan4 or not
+        shape_68 = float(getattr(roop.globals, 'face_shape_strength', 0.0) or 0.0) > 0.0
+        if (align_68 and not hi_68) or shape_68:
             analysis_modules.insert(0, "landmark_3d_68")
         roop.globals.g_desired_face_analysis = analysis_modules
         if options.swap_mode == "all_random":
@@ -460,6 +466,8 @@ class ProcessMgr():
         self.video_mode = True
         if self.stabilizer is not None:
             self.stabilizer.reset()
+        if getattr(self, 'target_tracks', None) is not None:
+            self.target_tracks.reset()
         if getattr(self, 'sequencer', None) is not None:
             self.sequencer.reset()
 
@@ -684,6 +692,12 @@ class ProcessMgr():
             and (self.video_mode or roop.globals.force_landmark_smoothing)
             and self.stabilizer is not None
         )
+        # identity / face-shape averages along each face's track: video only,
+        # independent of landmark smoothing
+        track_identity = float(getattr(roop.globals, 'identity_strength', 0.0) or 0.0) > 0.0
+        track_shape = float(getattr(roop.globals, 'face_shape_strength', 0.0) or 0.0) > 0.0
+        tracks_on = (self.video_mode and getattr(self, 'target_tracks', None) is not None
+                     and (track_identity or track_shape))
         mode = roop.globals.multi_angle_detection_mode
         angles = roop.globals.multi_angle_angles
 
@@ -709,6 +723,8 @@ class ProcessMgr():
                 refine_faces_landmark68(frame, [face])
                 if smoothing_on:
                     self.stabilizer.stabilize([face])
+                if tracks_on:
+                    self.target_tracks.update([face], identity=track_identity, shape=track_shape)
 
             num_faces_found += 1
             temp_frame = self.process_face(self.options.selected_index, face, temp_frame)
@@ -729,6 +745,8 @@ class ProcessMgr():
                 refine_faces_landmark68(frame, faces)
                 if smoothing_on:
                     self.stabilizer.stabilize(faces)
+                if tracks_on:
+                    self.target_tracks.update(faces, identity=track_identity, shape=track_shape)
             if self.options.swap_mode == "all":
                 for face in faces:
                     num_faces_found += 1
@@ -912,6 +930,22 @@ class ProcessMgr():
             Kind of subsampling the cutout and aligned face image and faceswapping slices of it up to
             the desired output resolution. This works around the current resolution limitations without using enhancers.
         """
+        # Face shape from the source (off at 0): the frame around this face is
+        # warped so the target's jaw / chin take the source's shape, BEFORE the
+        # crop is taken; inswapper keeps the shape it is given, and the face is
+        # pasted onto the warped frame. Brows, eyes, nose and lips do not move,
+        # so the alignment is unchanged. Not for auto-rotated faces (their
+        # landmarks live in the rotated cut-out). See roop/face_shape.py.
+        shape_strength = float(getattr(roop.globals, 'face_shape_strength', 0.0) or 0.0)
+        if shape_strength > 0.0 and inputface is not None and rotation_action is None:
+            try:
+                from roop.face_shape import warp_frame
+                frame = warp_frame(frame, target_face, self.input_face_datas[face_index], shape_strength)
+            except Exception as e:
+                if not getattr(self, '_shape_error_logged', False):
+                    self._shape_error_logged = True
+                    print(f'[face-shape] skipped: {e}')
+
         model_output_size = self.options.swap_output_size
         subsample_size = max(self.options.subsample_size, model_output_size)
         subsample_total = subsample_size // model_output_size
@@ -1135,7 +1169,9 @@ class ProcessMgr():
         # rounds differently (OpenCV 4.10: up to 11 levels). Starting at the
         # origin keeps every pixel identical to the old full-frame warp.
         square = img_matte
-        img_matte = cv2.warpAffine(square, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
+        face_aligned = getattr(roop.globals, 'mask_face_aligned', False)
+        if not face_aligned:
+            img_matte = cv2.warpAffine(square, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
 
         # NOTE: the frame border used to be zeroed HERE, before blur_area. That
         # was wrong: blur_area erodes with a kernel scaled to the face size, so
@@ -1146,7 +1182,10 @@ class ProcessMgr():
         # touches the frame edge keeps reaching it. On the paste area this is
         # exact: its sides inside the frame lie beyond the matte's reach (the
         # matte is zero there), its sides on the frame edge are the frame edge.
-        if getattr(roop.globals, 'mask_bottom_to_chin', False):
+        to_chin = getattr(roop.globals, 'mask_bottom_to_chin', False)
+        if face_aligned:
+            img_matte = self.face_aligned_matte(IM, area, square.shape, (top, bottom, left, right), erosion, blur, to_chin)
+        elif to_chin:
             img_matte = self.matte_to_chin(img_matte, square, IM, area, (top, bottom, left, right), erosion, blur)
         else:
             img_matte = self.blur_area(img_matte, erosion, blur)
@@ -1160,7 +1199,7 @@ class ProcessMgr():
             for i in range(3):  # Apply green color where img_matte is not zero
                 green_area[:, :, i] = np.where(img_matte > 0, green_color[i], 0)        ##Transform upcaled face back to target_img
         img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1])
-        paste_face = cv2.warpAffine(upsk_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)[y0:y1, x0:x1]
+        paste_face = cv2.warpAffine(upsk_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)
         if upsk_face is not fake_face:
             # IM is calibrated for upsk_face's size. With an enhancer the enhanced
             # face is 512 (all three enhancer models are 512-in/512-out) while the
@@ -1170,8 +1209,12 @@ class ProcessMgr():
             if fake_face.shape[:2] != upsk_face.shape[:2]:
                 fake_face = cv2.resize(fake_face, (upsk_face.shape[1], upsk_face.shape[0]),
                                        interpolation=cv2.INTER_AREA)
-            fake_face = cv2.warpAffine(fake_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)[y0:y1, x0:x1]
+            fake_face = cv2.warpAffine(fake_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)
+            # blended BEFORE cropping to the paste area: addWeighted rounds the
+            # last elements of a row differently (scalar vs SIMD), so blending
+            # the cropped views changed a pixel by 1 level now and then
             paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
+        paste_face = paste_face[y0:y1, x0:x1]
 
         # Optional Reinhard LAB color transfer toward the target, restricted to
         # the face region so background lighting does not skew the statistics.
@@ -1188,6 +1231,49 @@ class ProcessMgr():
             # Overlay the green overlay on the final image
             result = cv2.addWeighted(result, 1 - 0.5, green_overlay, 0.5, 0)
         return result
+
+
+    def face_aligned_matte(self, IM, area, shape, box, erosion, blur, to_chin):
+        """The paste matte built in the face crop's own coordinates, then warped
+        to the frame. blur_area erodes and feathers in FRAME pixels with an
+        axis-aligned square kernel sized from the matte's bounding box, so a
+        tilted face square is eroded deeper and feathered wider than an upright
+        one (about 75% deeper at 25 degrees): tilted faces kept more of the
+        target at the forehead, cheeks and chin. Here every tilt gets what an
+        upright face gets. to_chin: the bottom edge is not eroded and fades out
+        over the last 6% of the crop (see matte_to_chin). Returns a float matte
+        in [0, 1] on the paste area."""
+        x0, y0, x1, y1 = area
+        h, w = shape[:2]
+        top, bottom, left, right = box
+        # frame pixels per crop pixel. The canvas is drawn at r canvas pixels per
+        # crop pixel: at frame resolution for a face smaller in the frame than
+        # the crop (no point in a finer matte), at crop resolution otherwise.
+        scale = float(np.sqrt(abs(np.linalg.det(IM[:, :2])))) or 1.0
+        r = min(1.0, scale)
+        # blur_area's kernels for the same face upright (sized from the white
+        # area in frame pixels), in canvas pixels
+        size = int(np.sqrt(max(bottom - top, 1) * max(right - left, 1)) * scale)
+        k = max(1, int(round(max(size // 10, 10) * r / scale)))
+        k2 = max(1, int(round(max((size * blur) // 400, 4) * r / scale)))
+        pad = k * max(1, erosion) + 2 * k2 + 4
+        ch, cw = int(round(h * r)), int(round(w * r))
+        t, b, l, rt = (int(round(v * r)) for v in (top, bottom, left, right))
+        canvas = np.zeros((ch + 2 * pad, cw + 2 * pad), dtype=np.uint8)
+        white_bottom = canvas.shape[0] if to_chin else pad + b
+        canvas[pad + t:white_bottom, pad + l:pad + rt] = 255
+        canvas = cv2.erode(canvas, np.ones((k, k), np.uint8), iterations=erosion)
+        canvas = cv2.GaussianBlur(canvas, (2 * k2 + 1, 2 * k2 + 1), 0).astype(np.float32) / 255
+        if to_chin:
+            fade = max(2.0, 0.06 * h * r)
+            ys = np.arange(canvas.shape[0], dtype=np.float32) - pad
+            rows = np.clip((b - 1 - ys) / fade, 0.0, 1.0)
+            canvas *= (rows * rows * (3.0 - 2.0 * rows))[:, None]
+        # canvas pixel c -> crop pixel (c - pad) / r -> frame via IM -> paste area
+        A = IM[:, :2] / r
+        IM_canvas = np.hstack([A, (IM[:, 2] - A @ np.array([pad, pad], dtype=np.float64)
+                                   - np.array([x0, y0], dtype=np.float64))[:, None]])
+        return cv2.warpAffine(canvas, IM_canvas, (x1 - x0, y1 - y0), flags=cv2.INTER_LINEAR, borderValue=0.0)
 
 
     def matte_to_chin(self, img_matte, square, IM, area, box, erosion, blur):

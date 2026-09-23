@@ -105,7 +105,7 @@ def on_fb_files_changed(inputfiles, progress=gr.Progress()) -> Tuple[List[Frame]
 def display_video_frame(filename: str, frame_num: int, total: int=0) -> Tuple[gr.Image, gr.Slider]:
     global current_video_fps
 
-    current_frame = get_video_frame(filename, frame_num)
+    current_frame = get_video_frame(filename, frame_num, exact=True)
     if current_video_fps == 0:
         current_video_fps = 1
     secs = (frame_num - 1) / current_video_fps
