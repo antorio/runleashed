@@ -356,12 +356,11 @@ def shuffle_array(arr):
 
 
 def tuned_execution_providers():
-    """Return roop.globals.execution_providers with memory- and speed-friendly
-    CUDA options merged in:
-      - cudnn_conv_algo_search = HEURISTIC  (avoids the slow EXHAUSTIVE search)
-      - cudnn_conv_use_max_workspace = 0    (don't reserve the max conv workspace,
-        which can be GBs per session -- this is what caused the CUDA OOM when many
-        models, e.g. the 4 LivePortrait nets + GFPGAN, are resident together)
+    """Return roop.globals.execution_providers with the CUDA options from
+    roop.globals merged in (see the notes there for the trade-offs):
+      - cudnn_conv_algo_search       (globals default: EXHAUSTIVE)
+      - cudnn_conv_use_max_workspace (globals default: True; False saves GBs of
+        GPU memory per session when many models are resident, at a speed cost)
     We deliberately do NOT force arena_extend_strategy=kSameAsRequested anymore:
     it can fragment the arena and OOM (onnxruntime issue #14474); the default
     kNextPowerOfTwo reuses blocks better. Safe for non-CUDA providers."""

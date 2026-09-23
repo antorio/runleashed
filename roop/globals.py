@@ -61,8 +61,8 @@ use_landmark_alignment = True
 # reasonable color); enable if source/target lighting differs a lot.
 use_color_transfer = False
 # Occlusion mask ordering: the engine mask (Clip2Seg/XSeg/FaceParser) always runs
-# after the expression restorer now. False (default) = mask runs before the
-# enhancer; True = mask runs after the enhancer too, so restored occluders
+# after the expression restorer now. False = mask runs before the enhancer;
+# True (default) = mask runs after the enhancer too, so restored occluders
 # (hands/hair/etc) are not altered by the enhancer.
 mask_after_enhancer = True
 

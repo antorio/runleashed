@@ -51,6 +51,42 @@ def pick_queue(queue: Queue[str], queue_per_future: int) -> List[str]:
     return queues
 
 
+# swap_faces() result when the detector found no face at all (at any of the
+# tried angles), as opposed to 0 = faces found but none of them swapped.
+# Every caller tests "> 0", so it reads as "nothing swapped" everywhere.
+NO_FACE_DETECTED = -1
+
+
+# Idle processors (with their loaded ONNX sessions), kept between runs.
+# Preview -> render -> preview used to release every session and build it
+# again (plus cuDNN's EXHAUSTIVE algorithm search on its first inference) each
+# time. ProcessMgr itself stays per-run, so its per-run state (stabilizer,
+# sequencer, counters) is still fresh; only the model wrappers are shared, and
+# they hold no per-frame state.
+_idle_processors = {}
+_idle_lock = Lock()
+
+
+def _plugin_key(processor):
+    # the key from ProcessMgr.plugins; processorname does not always match it
+    # (Clip2Seg: 'clip2seg' vs 'mask_clip2seg'), which made that model reload
+    # on every initialize
+    return getattr(processor, 'plugin_key', processor.processorname)
+
+
+def _take_idle_processor(key):
+    with _idle_lock:
+        return _idle_processors.pop(key, None)
+
+
+def _release_idle_processors(keep=()):
+    with _idle_lock:
+        drop = [key for key in _idle_processors if key not in keep]
+        processors = [_idle_processors.pop(key) for key in drop]
+    for p in processors:
+        p.Release()
+
+
 
 class FrameSequencer():
     """Lets frames enter a critical section in FRAME ORDER.
@@ -63,9 +99,13 @@ class FrameSequencer():
     motion-adaptive alpha measured motion across ~8-frame gaps, so it kept
     concluding "big movement" and disengaging.
 
-    Only detection + landmark refinement + smoothing needs the ordering; the
-    expensive swap/paste stays fully parallel. While frame N is inside the
+    Only landmark refinement + smoothing run inside the section; detection and
+    the expensive swap/paste stay fully parallel. While frame N is inside the
     section, frame N-1 is already swapping, so throughput is barely affected.
+
+    Every video frame must take its turn exactly once, including frames in
+    which no face was found (pass_turn). A frame that never checks in makes the
+    next frame wait for the full timeout -- a 10 s freeze per face dropout.
     """
     def __init__(self):
         self._cond = Condition()
@@ -76,6 +116,11 @@ class FrameSequencer():
             self._expected = 0
             self._cond.notify_all()
 
+    def pass_turn(self, index):
+        """Take this frame's turn without doing any ordered work."""
+        with self.in_order(index):
+            pass
+
     @contextmanager
     def in_order(self, index, timeout=10.0):
         if index is None:
@@ -83,7 +128,10 @@ class FrameSequencer():
             return
         with self._cond:
             deadline = time.time() + timeout
-            while self._expected != index and roop.globals.processing:
+            # Wait only while an EARLIER frame still has to pass. A frame that is
+            # already late (a later frame timed out past it) goes straight in:
+            # its turn can never come round again, so waiting would only stall.
+            while self._expected < index and roop.globals.processing:
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     # Never hang the render: if the frame we are waiting for was
@@ -163,15 +211,17 @@ class ProcessMgr():
 
     def reuseOldProcessor(self, name:str):
         for p in self.processors:
-            if p.processorname == name:
+            if _plugin_key(p) == name:
                 return p
-            
+
         return None
 
 
     def initialize(self, input_faces, target_faces, options):
-        self.input_face_datas = input_faces
-        self.target_face_datas = target_faces
+        # Own copies of the face lists: the UI can add/remove faces while a
+        # render runs, and the render must keep using the faces it started with.
+        self.input_face_datas = list(input_faces)
+        self.target_face_datas = list(target_faces)
         self.num_frames_no_face = 0
         self.last_swapped_frame = None
         self.options = options
@@ -212,20 +262,25 @@ class ProcessMgr():
             shuffle_array(self.input_face_datas)
 
 
+        # Release processors that are no longer requested -- ours and idle ones
+        # left by a previous run -- before creating any new one, so peak GPU
+        # memory stays what it was.
         for p in self.processors:
-            newp = next((x for x in options.processors.keys() if x == p.processorname), None)
-            if newp is None:
+            if _plugin_key(p) not in options.processors:
                 p.Release()
-                del p
+        _release_idle_processors(keep=options.processors.keys())
 
         newprocessors = []
         for key, extoption in options.processors.items():
             p = self.reuseOldProcessor(key)
             if p is None:
+                p = _take_idle_processor(key)
+            if p is None:
                 classname = self.plugins[key]
                 module = 'roop.processors.' + classname
                 p = str_to_class(module, classname)
             if p is not None:
+                p.plugin_key = key
                 extoption.update({"devicename": devicename})
                 if p.type == "swap":
                     # ReSwapper removed -- InSwapper 128 is the only swap model.
@@ -568,7 +623,9 @@ class ProcessMgr():
                 if len(self.input_face_datas) > num_swapped:
                     return None
             self.num_frames_no_face = 0
-            self.last_swapped_frame = temp_frame.copy()
+            # only "Use last swapped" ever reads this copy of the whole frame
+            if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
+                self.last_swapped_frame = temp_frame.copy()
             return temp_frame
         if roop.globals.no_face_action == eNoFaceAction.USE_LAST_SWAPPED:
             if self.last_swapped_frame is not None and self.num_frames_no_face < self.options.max_num_reuse_frame:
@@ -585,7 +642,19 @@ class ProcessMgr():
             #alternatively, it could mark all the necessary frames for deletion, delete them at the end, then rename the remaining frames that might work?
             return None
         else:
+            if num_swapped == NO_FACE_DETECTED and self.all_rotations_detected():
+                # Multi-angle detection already looked at this frame at 0, 90,
+                # 180 and 270 degrees and found nothing. The rotated retry would
+                # run exactly those detections again (8 more passes) and return
+                # the untouched frame.
+                return frame
             return self.retry_rotated(frame)
+
+    @staticmethod
+    def all_rotations_detected():
+        mode = roop.globals.multi_angle_detection_mode
+        angles = set(roop.globals.multi_angle_angles or [])
+        return mode in ('fallback', 'always') and {90, 180, 270} <= angles
 
     def retry_rotated(self, frame):
         copyframe = frame.copy()
@@ -628,11 +697,15 @@ class ProcessMgr():
             if face is None:
                 if _prof:
                     print(f"[timing] detect={ (_t1-_t0)*1000:.0f}ms  (no face)  frame={frame.shape[1]}x{frame.shape[0]}")
-                return num_faces_found, frame
+                self.sequencer.pass_turn(frame_index)
+                return NO_FACE_DETECTED, frame
 
             # ordered: landmark refinement + temporal smoothing must see frames
-            # in real sequence (the swap below stays parallel)
-            with self.sequencer.in_order(frame_index if smoothing_on else None):
+            # in real sequence (the swap below stays parallel). Every video frame
+            # takes its turn exactly once -- frames without a face too (above) --
+            # and the order is kept whether or not smoothing is on, so switching
+            # smoothing mid-render cannot desync the sequencer.
+            with self.sequencer.in_order(frame_index):
                 refine_faces_landmark68(frame, [face])
                 if smoothing_on:
                     self.stabilizer.stabilize([face])
@@ -648,10 +721,11 @@ class ProcessMgr():
         else:
             faces = get_all_faces_multi(frame, mode=mode, angles=angles)
             if faces is None:
-                return num_faces_found, frame
+                self.sequencer.pass_turn(frame_index)
+                return NO_FACE_DETECTED, frame
 
             # ordered: see note above
-            with self.sequencer.in_order(frame_index if smoothing_on else None):
+            with self.sequencer.in_order(frame_index):
                 refine_faces_landmark68(frame, faces)
                 if smoothing_on:
                     self.stabilizer.stabilize(faces)
@@ -1023,7 +1097,6 @@ class ProcessMgr():
         M_scale = M * scale_factor
         IM = cv2.invertAffineTransform(M_scale)
 
-        face_matte = np.full((target_img.shape[0],target_img.shape[1]), 255, dtype=np.uint8)
         # Generate white square sized as a upsk_face
         img_matte = np.zeros((upsk_face.shape[0],upsk_face.shape[1]), dtype=np.uint8)
 
@@ -1036,9 +1109,32 @@ class ProcessMgr():
         right = int(w - (mask_offsets[3] * w))
         img_matte[top:bottom,left:right] = 255
 
+        # erosion / feather are global settings now (see roop/globals.py)
+        erosion = int(getattr(roop.globals, 'mask_erosion_iterations', 1))
+        blur = int(getattr(roop.globals, 'mask_blur_size', 20))
+
+        # Only the paste area is processed. The matte is zero outside the warped
+        # face square, so eroding, blurring, warping and blending the whole frame
+        # was wasted work (~0.13 s per face at 1080p, ~0.6 s at 4K, on CPU).
+        area = self.paste_area(IM, w, h, target_img.shape, erosion, blur)
+        if area is None:
+            # the face square lies outside the frame: nothing to paste (the
+            # overlay still dims the frame, as it always did)
+            result = target_img.copy()
+            if self.options.show_face_area_overlay:
+                result = cv2.addWeighted(result, 1 - 0.5, np.zeros_like(target_img), 0.5, 0)
+            return result
+        x0, y0, x1, y1 = area
+        target_area = target_img[y0:y1, x0:x1]
+
         # Transform white area back to target_img (INTER_LINEAR for soft,
         # anti-aliased edges instead of the stair-stepped INTER_NEAREST).
-        img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_LINEAR, borderValue=0.0)
+        # The warps start at the frame origin (dsize x1,y1) and are cropped
+        # afterwards: warpAffine's fixed-point coordinates depend on the
+        # absolute pixel position, so a warp with the matrix shifted to x0,y0
+        # rounds differently (OpenCV 4.10: up to 11 levels). Starting at the
+        # origin keeps every pixel identical to the old full-frame warp.
+        img_matte = cv2.warpAffine(img_matte, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
 
         # NOTE: the frame border used to be zeroed HERE, before blur_area. That
         # was wrong: blur_area erodes with a kernel scaled to the face size, so
@@ -1046,23 +1142,21 @@ class ProcessMgr():
         # swap stopped 10-20px short of the picture edge (a visible "inner
         # frame" whenever a face sits against the side of the shot). blur_area
         # now replicates the border while eroding, so a matte that legitimately
-        # touches the frame edge keeps reaching it.
-        # erosion / feather are global settings now (see roop/globals.py)
-        img_matte = self.blur_area(img_matte,
-                                   int(getattr(roop.globals, 'mask_erosion_iterations', 1)),
-                                   int(getattr(roop.globals, 'mask_blur_size', 20)))
+        # touches the frame edge keeps reaching it. On the paste area this is
+        # exact: its sides inside the frame lie beyond the matte's reach (the
+        # matte is zero there), its sides on the frame edge are the frame edge.
+        img_matte = self.blur_area(img_matte, erosion, blur)
         #Normalize images to float values and reshape
         img_matte = img_matte.astype(np.float32)/255
-        face_matte = face_matte.astype(np.float32)/255
-        img_matte = np.minimum(face_matte, img_matte)
         if self.options.show_face_area_overlay:
             # Additional steps for green overlay
             green_overlay = np.zeros_like(target_img)
+            green_area = green_overlay[y0:y1, x0:x1]
             green_color = [0, 255, 0]  # RGB for green
             for i in range(3):  # Apply green color where img_matte is not zero
-                green_overlay[:, :, i] = np.where(img_matte > 0, green_color[i], 0)        ##Transform upcaled face back to target_img
-        img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1]) 
-        paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+                green_area[:, :, i] = np.where(img_matte > 0, green_color[i], 0)        ##Transform upcaled face back to target_img
+        img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1])
+        paste_face = cv2.warpAffine(upsk_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)[y0:y1, x0:x1]
         if upsk_face is not fake_face:
             # IM is calibrated for upsk_face's size. With an enhancer the enhanced
             # face is 512 (all three enhancer models are 512-in/512-out) while the
@@ -1072,21 +1166,47 @@ class ProcessMgr():
             if fake_face.shape[:2] != upsk_face.shape[:2]:
                 fake_face = cv2.resize(fake_face, (upsk_face.shape[1], upsk_face.shape[0]),
                                        interpolation=cv2.INTER_AREA)
-            fake_face = cv2.warpAffine(fake_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+            fake_face = cv2.warpAffine(fake_face, IM, (x1, y1), borderMode=cv2.BORDER_REPLICATE)[y0:y1, x0:x1]
             paste_face = cv2.addWeighted(paste_face, self.options.blend_ratio, fake_face, 1.0 - self.options.blend_ratio, 0)
 
         # Optional Reinhard LAB color transfer toward the target, restricted to
         # the face region so background lighting does not skew the statistics.
         if roop.globals.use_color_transfer:
-            paste_face = self._match_color_masked(paste_face, target_img, img_matte)
+            paste_face = self._match_color_masked(paste_face, target_area, img_matte)
 
-        # Re-assemble image
+        # Re-assemble image (outside the paste area the matte is zero, so the
+        # frame is left exactly as it was)
         paste_face = img_matte * paste_face
-        paste_face = paste_face + (1-img_matte) * target_img.astype(np.float32)
+        paste_face = paste_face + (1-img_matte) * target_area.astype(np.float32)
+        result = target_img.copy()
+        result[y0:y1, x0:x1] = paste_face.astype(np.uint8)
         if self.options.show_face_area_overlay:
             # Overlay the green overlay on the final image
-            paste_face = cv2.addWeighted(paste_face.astype(np.uint8), 1 - 0.5, green_overlay, 0.5, 0)
-        return paste_face.astype(np.uint8)
+            result = cv2.addWeighted(result, 1 - 0.5, green_overlay, 0.5, 0)
+        return result
+
+
+    @staticmethod
+    def paste_area(IM, w, h, frame_shape, erosion, blur):
+        """Frame rectangle (x0, y0, x1, y1) that paste_upscale has to touch: the
+        w x h face square warped by IM, widened by the furthest that
+        blur_area's erosion + feather can reach (its kernel sizes, computed
+        from an upper bound of the square's size). None when the square lies
+        entirely outside the frame."""
+        frame_h, frame_w = frame_shape[:2]
+        corners = np.array([[[0, 0], [w, 0], [w, h], [0, h]]], dtype=np.float32)
+        quad = cv2.transform(corners, IM)[0]
+        qx0, qy0 = np.floor(quad.min(axis=0)).astype(int) - 1
+        qx1, qy1 = np.ceil(quad.max(axis=0)).astype(int) + 1
+        size = int(np.sqrt(max(qx1 - qx0, 1) * max(qy1 - qy0, 1)))
+        k = max(size // 10, 10)
+        k2 = max((size * blur) // 400, 4)
+        margin = int(k * max(1, erosion) + 2 * k2 + 4)
+        x0, y0 = max(int(qx0) - margin, 0), max(int(qy0) - margin, 0)
+        x1, y1 = min(int(qx1) + margin, frame_w), min(int(qy1) + margin, frame_h)
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return x0, y0, x1, y1
 
 
     def _match_color_masked(self, src, dst, mask):
@@ -1473,9 +1593,19 @@ class ProcessMgr():
 
 
 
-    def release_resources(self):
-        for p in self.processors:
-            p.Release()
+    def release_resources(self, keep_models=False):
+        if keep_models:
+            # park the processors (and their loaded sessions) for the next run
+            with _idle_lock:
+                for p in self.processors:
+                    previous = _idle_processors.get(_plugin_key(p))
+                    if previous is not None and previous is not p:
+                        previous.Release()
+                    _idle_processors[_plugin_key(p)] = p
+        else:
+            for p in self.processors:
+                p.Release()
+            _release_idle_processors()
         self.processors.clear()
         if self.videowriter is not None:
             self.videowriter.close()

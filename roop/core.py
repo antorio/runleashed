@@ -105,12 +105,14 @@ def limit_resources() -> None:
 
 
 
-def release_resources() -> None:
+def release_resources(keep_models=False) -> None:
     import gc
     global process_mgr
 
     if process_mgr is not None:
-        process_mgr.release_resources()
+        # keep_models: the loaded model sessions are parked and picked up by the
+        # next preview/render instead of being rebuilt (see ProcessMgr)
+        process_mgr.release_resources(keep_models=keep_models)
         process_mgr = None
 
     gc.collect()
@@ -221,8 +223,8 @@ def get_processing_plugins(masking_engine):
     # Occlusion mask runs AFTER the expression restorer (so the ER never warps the
     # restored occluders like hands/hair). The mask/enhancer order is controlled
     # SOLELY by the user's 'mask_after_enhancer' toggle, for EVERY enhancer
-    # (GFPGAN, CodeFormer, RestoreFormer++): off (default) = mask before the
-    # enhancer; on = mask runs last.
+    # (GFPGAN, CodeFormer, RestoreFormer++): off = mask before the enhancer;
+    # on (the default in globals.py) = mask runs last.
     # Note: RestoreFormer++ / CodeFormer are codebook restorers that can colour-burn
     # when they enhance a crop that still contains a restored occluder (non-face
     # pixels). If you use them on footage WITH occluders and see colour burn, tick
@@ -266,7 +268,7 @@ def live_swap(frame, options):
 def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], masking_engine:str, new_clip_text:str, use_new_method, imagemask, restore_original_mouth, restore_original_eyes, num_swap_steps, progress, selected_index = 0) -> None:
     global clip_text, process_mgr
 
-    release_resources()
+    release_resources(keep_models=True)
     limit_resources()
     if process_mgr is None:
         process_mgr = ProcessMgr(progress)
@@ -407,7 +409,7 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
 def end_processing(msg:str):
     update_status(msg)
     roop.globals.target_folder_path = None
-    release_resources()
+    release_resources(keep_models=True)
 
 
 def destroy() -> None:
