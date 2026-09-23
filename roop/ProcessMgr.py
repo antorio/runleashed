@@ -1134,7 +1134,8 @@ class ProcessMgr():
         # absolute pixel position, so a warp with the matrix shifted to x0,y0
         # rounds differently (OpenCV 4.10: up to 11 levels). Starting at the
         # origin keeps every pixel identical to the old full-frame warp.
-        img_matte = cv2.warpAffine(img_matte, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
+        square = img_matte
+        img_matte = cv2.warpAffine(square, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
 
         # NOTE: the frame border used to be zeroed HERE, before blur_area. That
         # was wrong: blur_area erodes with a kernel scaled to the face size, so
@@ -1145,9 +1146,12 @@ class ProcessMgr():
         # touches the frame edge keeps reaching it. On the paste area this is
         # exact: its sides inside the frame lie beyond the matte's reach (the
         # matte is zero there), its sides on the frame edge are the frame edge.
-        img_matte = self.blur_area(img_matte, erosion, blur)
-        #Normalize images to float values and reshape
-        img_matte = img_matte.astype(np.float32)/255
+        if getattr(roop.globals, 'mask_bottom_to_chin', False):
+            img_matte = self.matte_to_chin(img_matte, square, IM, area, (top, bottom, left, right), erosion, blur)
+        else:
+            img_matte = self.blur_area(img_matte, erosion, blur)
+            #Normalize images to float values and reshape
+            img_matte = img_matte.astype(np.float32)/255
         if self.options.show_face_area_overlay:
             # Additional steps for green overlay
             green_overlay = np.zeros_like(target_img)
@@ -1184,6 +1188,37 @@ class ProcessMgr():
             # Overlay the green overlay on the final image
             result = cv2.addWeighted(result, 1 - 0.5, green_overlay, 0.5, 0)
         return result
+
+
+    def matte_to_chin(self, img_matte, square, IM, area, box, erosion, blur):
+        """The paste matte with the 'Extend swap to the chin' option. The top and
+        side edges get exactly their usual erosion + feather; the bottom edge
+        instead fades out over the last 6% of the crop. The arcface crop puts the
+        chin at ~87-92% of its height, so the usual erosion + feather band of the
+        bottom edge landed on the chin and left the target's chin unswapped.
+        img_matte is the warped square on the paste area; returns a float matte
+        in [0, 1]."""
+        x0, y0, x1, y1 = area
+        h, w = square.shape[:2]
+        top, bottom, left, right = box
+        mask_size = self.matte_size(img_matte)
+        if mask_size is None:
+            return img_matte.astype(np.float32) / 255
+        # the square continued well below the crop, so erosion + feather only
+        # shape its top and sides -- with the kernels of the real square
+        tall = np.zeros((h + h // 2, w), dtype=np.uint8)
+        tall[top:, left:right] = 255
+        tall = cv2.warpAffine(tall, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderValue=0.0)[y0:y1, x0:x1]
+        tall = self.blur_area(tall, erosion, blur, mask_size=mask_size).astype(np.float32) / 255
+        # the bottom edge: a smooth fade over the last 6% above `bottom`, zero
+        # from there down (below the crop there are no swapped pixels). The fade
+        # is 1 beyond the other sides, leaving those edges to the matte above.
+        fade = max(2, int(round(0.06 * h)))
+        rows = np.clip((bottom - 1 - np.arange(h, dtype=np.float32)) / fade, 0.0, 1.0)
+        rows = rows * rows * (3.0 - 2.0 * rows)
+        edge = np.repeat(rows[:, None], w, axis=1)
+        edge = cv2.warpAffine(edge, IM, (x1, y1), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)[y0:y1, x0:x1]
+        return np.minimum(tall, edge)
 
 
     @staticmethod
@@ -1233,20 +1268,31 @@ class ProcessMgr():
         # here after the return -- removed.)
 
 
-    def blur_area(self, img_matte, num_erosion_iterations, blur_amount):
+    @staticmethod
+    def matte_size(img_matte):
+        """Size (geometric mean of height and width) of the white area of a
+        matte, which scales blur_area's kernels. None for an empty matte."""
         # Detect the affine transformed white area
         mask_h_inds, mask_w_inds = np.where(img_matte==255)
         if mask_h_inds.size == 0:
             # No pixel is exactly 255 (e.g. an anti-aliased user image mask):
-            # fall back to the non-zero area; if the matte is fully empty just
-            # return it (nothing to feather) instead of crashing on np.max([]).
+            # fall back to the non-zero area; if the matte is fully empty there
+            # is nothing to feather (instead of crashing on np.max([])).
             mask_h_inds, mask_w_inds = np.where(img_matte > 0)
             if mask_h_inds.size == 0:
-                return img_matte
+                return None
         # Calculate the size (and diagonal size) of transformed white area width and height boundaries
-        mask_h = np.max(mask_h_inds) - np.min(mask_h_inds) 
+        mask_h = np.max(mask_h_inds) - np.min(mask_h_inds)
         mask_w = np.max(mask_w_inds) - np.min(mask_w_inds)
-        mask_size = int(np.sqrt(mask_h*mask_w))
+        return int(np.sqrt(mask_h*mask_w))
+
+
+    def blur_area(self, img_matte, num_erosion_iterations, blur_amount, mask_size=None):
+        # mask_size: pass the size of another matte to get exactly its kernels
+        if mask_size is None:
+            mask_size = self.matte_size(img_matte)
+            if mask_size is None:
+                return img_matte
         # Calculate the kernel size for eroding img_matte by kernel (insightface empirical guess for best size was max(mask_size//10,10))
         # k = max(mask_size//12, 8)
         # Erosion and feather used to share ONE number, and inverted at that:

@@ -94,6 +94,7 @@ def faceswap_tab():
                     with gr.Row():
                         mask_erosion = gr.Slider(1.0, 3.0, value=lambda a='mask_erosion_iterations': getattr(roop.globals, a), label="Erosion", step=1.00, interactive=True)
                         mask_blur = gr.Slider(4.0, 100.0, value=lambda a='mask_blur_size': getattr(roop.globals, a), label="Blur size", step=1.00, interactive=True)
+                    chk_mask_to_chin = gr.Checkbox(label="Extend swap to the chin", info="Bottom edge ignores Erosion / Blur size", value=lambda a='mask_bottom_to_chin': getattr(roop.globals, a), interactive=True)
                     with gr.Row():
                         bt_toggle_masking = gr.Button("Toggle manual masking", variant="secondary", size="sm")
                         bt_preview_mask = gr.Button("Show Mask Preview", variant="secondary", size="sm")
@@ -193,6 +194,7 @@ def faceswap_tab():
         (fs_lmk_smooth, 'landmark_smoothing'),
         (fs_pose_lock, 'expression_pose_lock'),
         (fs_pose_gate, 'expression_pose_gate'),
+        (chk_mask_to_chin, 'mask_bottom_to_chin'),
     ]
     for _c, _n in _fs_toggles:
         _c.change(fn=lambda v, n=_n: setattr(roop.globals, n, v), inputs=[_c], outputs=[])

@@ -34,6 +34,13 @@ subsample_size = 128
 # face was selected, and silently did nothing when no source face was loaded.
 mask_erosion_iterations = 1     # how much the matte is shrunk (area)
 mask_blur_size = 20             # edge softness only (does not shrink the area)
+# Bottom edge of the matte (A/B toggle; False = the old behaviour). The arcface
+# crop puts the chin at ~87-92% of its height, so Erosion / Blur size, applied
+# to all four sides of the face square, could leave the chin unswapped: a strong
+# target chin showing through, often with a visible line across it. True: the
+# bottom edge ignores Erosion / Blur size and fades out over the last 6% of the
+# crop instead; the top and side edges are unchanged.
+mask_bottom_to_chin = False
 face_swap_mode = None
 blend_ratio = 0.5
 distance_threshold = 0.65
