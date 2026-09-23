@@ -40,13 +40,18 @@
 - ER Strength dan Expression power adalah pengali yang sama (amt = factor × power).
 - `angle0_bonus` hanya berpengaruh di multi-angle `always`; di `fallback`, deteksi sudut-0 dan rotasi tidak pernah bersaing.
 
-## Masalah diketahui (dicek 23 Sep 2026, belum diperbaiki)
-1. **Stall 10 dtk** (disimulasikan dengan kelas asli): frame tanpa wajah tidak pernah masuk `FrameSequencer.in_order`, jadi frame berikutnya menunggu timeout 10 dtk. Terjadi pada render in-memory + smoothing ON (default). 200 frame: 0,7 dtk → 10,7 dtk per satu kejadian wajah hilang.
-2. **Paste seluruh frame** (diukur): `paste_upscale`/`blur_area` bekerja di seluruh frame. Versi ROI 4,4–6,4× lebih cepat, selisih maks 1 level warna (CPU 1 thread: 1080p 145→32 ms/wajah, 4K 641→144 ms).
-3. **Preview saat render** (dari kode): `live_swap` memakai `ProcessMgr` global yang sama, jadi `initialize()` mengganti options/processors/sequencer/stabilizer render yang sedang jalan. Preview tidak mengecek `is_processing`.
-4. **Keypoint ER** (dibandingkan ke FaceFusion): kp 0,3,4,5,7,8,9,10 selalu ditransfer. FaceFusion tidak pernah mentransfer [0,4,5,8,9] dan memakai batas per-keypoint `EXPRESSION_MIN/MAX` (di sini hanya clamp skalar, off). Hipotesis: ini sumber drift kepala yang ditambal pose-lock. Perlu A/B visual.
-5. Retry rotated (default no-face action) mengulang semua pass multi-angle: ±12 deteksi per frame tanpa wajah (dari kode).
-6. Sesi ONNX dilepas di awal dan akhir tiap render, lalu dibangun ulang (+ pencarian cuDNN EXHAUSTIVE) tiap render dan preview pertama sesudahnya (dari kode; overhead belum diukur di L4).
-7. Analyser menjalankan landmark + recognition + genderage untuk SEMUA wajah tiap frame, walau tidak dipakai (dari kode).
-8. Jalur "Extract Frames" tidak memakai temporal smoothing, jadi hasilnya beda dengan in-memory (dari kode).
-9. Kecil: `processorname` Clip2Seg tidak cocok sehingga model dimuat ulang tiap init (warisan upstream). "Wait for key press" memanggil `input()` (tidak berguna di Colab). `gr.Error` "No Target Face" tidak di-raise, jadi Start diam saja. `tools_jitter_probe.py` rusak (import `align_conditioner` yang sudah dihapus). Komentar usang: `core.py` menyebut `mask_after_enhancer` default off (nyatanya ON); docstring `tuned_execution_providers` menyebut HEURISTIC (nyatanya EXHAUSTIVE).
+## Tahap 1 — branch `perf/phase1` (menunggu uji di L4)
+Perbaikan performa/bug yang **tidak mengubah gambar**; semuanya diuji tanpa GPU dengan `ProcessMgr` asli (lama dari `main` vs baru) + detektor/swapper tiruan:
+- **Stall 10 dtk dihapus.** Frame tanpa wajah kini tetap mengambil gilirannya (`FrameSequencer.pass_turn`); frame yang terlambat tidak menunggu. Urutan dijaga untuk setiap frame video, termasuk saat smoothing OFF. Jalur render in-memory penuh, 160 frame + 4 wajah hilang: 30,4 dtk → 0,4 dtk. Landmark ter-smooth identik dengan smoothing berurutan ideal. Kode lama kadang juga memasukkan frame ke smoothing tidak berurutan setelah timeout (race).
+- **Paste hanya di area wajah.** Warp dihitung dari titik (0,0) frame lalu dipotong → **bit-identik** dengan kode lama di OpenCV 4.10 dan 5.0 (ratusan kasus acak termasuk offset, erosi/blur, enhancer, color transfer, overlay, wajah di tepi/di luar frame). ±3,2× lebih cepat untuk wajah berukuran wajar. Varian yang menggeser matriks ke ROI TIDAK identik di OpenCV 4.10 (fixed-point bergantung posisi absolut).
+- **Preview tidak menyentuh render yang sedang jalan** (`is_processing` → tampilkan frame asli). Render juga memakai salinan daftar wajah sendiri.
+- **Model dipakai ulang antar preview/render** (pool `_idle_processors`). Skenario uji: 10 → 4 kali pembuatan model. Keluar aplikasi = semua dilepas. Clip2Seg tidak lagi dimuat ulang tiap init.
+- Retry rotated dilewati hanya bila multi-angle sudah mencoba 0/90/180/270 dan tidak menemukan wajah sama sekali (hasil sama, 12 → 4 deteksi). Mode Selected/`off` tetap retry.
+- Salinan frame untuk "Use last swapped" hanya dibuat di mode itu. Komentar default yang salah dibetulkan.
+- Uji di Colab: `runleashed_colab.ipynb` (param `BRANCH`); bandingkan output dengan `tools/compare_renders.py`.
+
+## Masalah diketahui (belum diperbaiki)
+1. **Keypoint ER** (dibandingkan ke FaceFusion): kp 0,3,4,5,7,8,9,10 selalu ditransfer. FaceFusion tidak pernah mentransfer [0,4,5,8,9] dan memakai batas per-keypoint `EXPRESSION_MIN/MAX` (di sini hanya clamp skalar, off). Hipotesis: ini sumber drift kepala yang ditambal pose-lock. Perlu A/B visual.
+2. Analyser menjalankan landmark + recognition + genderage untuk SEMUA wajah tiap frame, walau tidak dipakai (dari kode). Ditunda: butuh model asli untuk verifikasi.
+3. Jalur "Extract Frames" tidak memakai temporal smoothing, jadi hasilnya beda dengan in-memory (dari kode).
+4. Kecil: "Wait for key press" memanggil `input()` (tidak berguna di Colab). `gr.Error` "No Target Face" tidak di-raise, jadi Start diam saja. `tools_jitter_probe.py` rusak (import `align_conditioner` yang sudah dihapus). Setting live (slider/checkbox) yang diubah di tengah render tetap langsung memengaruhi render.
