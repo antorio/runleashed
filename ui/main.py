@@ -56,6 +56,20 @@ def run():
         util.print_cuda_info()
         
     print(f'Using provider {roop.globals.execution_providers} - Device:{gputype}')
+
+    # Download (first run) and build the face analyser in the background while
+    # the UI starts, so the first preview / "Use face from this frame" finds it
+    # ready. The analyser lock makes any early click wait for it instead of
+    # starting a second download.
+    def _warm_up():
+        try:
+            from roop.face_util import get_face_analyser
+            get_face_analyser()
+            print('[load] face analyser ready')
+        except Exception as e:
+            print(f'[load] face analyser not ready at startup ({e}); it will be built on first use')
+    import threading
+    threading.Thread(target=_warm_up, name='analyser-warmup', daemon=True).start()
     
     run_server = True
     uii.ui_restart_server = False

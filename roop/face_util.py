@@ -12,16 +12,23 @@ from roop.capturer import get_video_frame
 from roop.utilities import resolve_relative_path, conditional_thread_semaphore
 
 FACE_ANALYSER = None
-#THREAD_LOCK_ANALYSER = threading.Lock()
-#THREAD_LOCK_SWAPPER = threading.Lock()
+# Building (and on first use downloading) buffalo_l must happen once. The old
+# guard was conditional_thread_semaphore(), which is a no-op on CUDA, so two
+# Gradio events at the same moment both started the download and the second
+# crashed with FileExistsError on models/buffalo_l.
+_ANALYSER_LOCK = threading.Lock()
+_ANALYSER_CPU = None        # force_cpu the current analyser was built with
 FACE_SWAPPER = None
 
 
 def get_face_analyser() -> Any:
-    global FACE_ANALYSER
+    global FACE_ANALYSER, _ANALYSER_CPU
 
-    with conditional_thread_semaphore():
-        if FACE_ANALYSER is None or roop.globals.g_current_face_analysis != roop.globals.g_desired_face_analysis:
+    with _ANALYSER_LOCK:
+        force_cpu = bool(roop.globals.CFG.force_cpu)
+        if (FACE_ANALYSER is None or _ANALYSER_CPU != force_cpu
+                or roop.globals.g_current_face_analysis != roop.globals.g_desired_face_analysis):
+            _ANALYSER_CPU = force_cpu
             model_path = resolve_relative_path('..')
             # removed genderage
             allowed_modules = roop.globals.g_desired_face_analysis
