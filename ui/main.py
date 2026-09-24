@@ -45,6 +45,11 @@ def run():
     from roop.core import decode_execution_providers, set_display_ui
 
     prepare_environment()
+    # nothing in ./temp outlives a run (uploads, video copies, thumbnails):
+    # start with it empty
+    freed = util.clean_temp_folder()
+    if freed:
+        print(f'[temp] emptied {os.environ.get("TEMP")}: {freed / 1e6:.0f} MB from the last run')
 
     set_display_ui(show_msg)
     if roop.globals.CFG.provider == "cuda" and util.has_cuda_device() == False:

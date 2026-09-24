@@ -68,6 +68,8 @@ def settings_tab():
                         button_apply_settings = gr.Button("Apply Settings", variant='primary')
                         button_apply_restart = gr.Button("Restart Server")
                     button_clean_temp = gr.Button("Clean temp folder")
+                    gr.Markdown("Empties the app's temp folder (uploads, video copies, thumbnails). "
+                                "It is also emptied at every start. Uploaded files have to be added again.")
 
     for c in expr_global_controls:
         c.select(fn=on_option_changed)
@@ -154,16 +156,21 @@ def on_settings_changed(evt: gr.SelectData):
 
 def clean_temp():
     from ui.main import prepare_environment
-    
+    from roop.utilities import clean_temp_folder
+
+    if roop.globals.processing:
+        gr.Warning('A render is running: its files are in the temp folder. Clean it when the render is done.')
+        return
+    if roop.globals.CFG.use_os_temp_folder:
+        gr.Warning('"Use OS temp folder" is on: the system temp folder is not cleaned by the app.')
+        return
     ui.globals.ui_input_thumbs.clear()
     roop.globals.INPUT_FACESETS.clear()
     roop.globals.TARGET_FACES.clear()
     ui.globals.ui_target_thumbs = []
-    if not roop.globals.CFG.use_os_temp_folder:
-        clean_dir(os.environ["TEMP"])
+    freed = clean_temp_folder()
     prepare_environment()
-    gr.Info('Temp Files removed')
-    return None,None,None,None
+    gr.Info(f'Temp folder emptied: {freed / 1e6:.0f} MB freed. Add source / target files again.')
 
 
 def apply_settings(themes, input_server_name, input_server_port, output_template, max_threads, memory_limit, video_quality):

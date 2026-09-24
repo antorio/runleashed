@@ -71,6 +71,7 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 /* Face Management: the status on each photo must stay readable */
 #facemgr_gallery .caption-label { opacity: 1 !important; font-size: 12px !important; max-width: 94% !important; white-space: nowrap; text-overflow: ellipsis; }
 #facemgr_gallery .thumbnail-lg:hover .caption-label { opacity: 1 !important; }
+#facemgr_gallery .grid-wrap { min-height: 360px !important; max-height: 68vh !important; overflow-y: auto !important; }
 #src_files .wrap, #dst_files .wrap,
 #src_files [data-testid="upload"] .wrap, #dst_files [data-testid="upload"] .wrap {
   min-height: 78px !important; padding: 10px !important; font-size: 0 !important; }

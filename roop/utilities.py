@@ -325,6 +325,35 @@ def print_cuda_info():
     except:
        print('No CUDA device found!')
 
+def folder_size(path: str) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def clean_temp_folder() -> int:
+    """Empty the app's own temp folder (./temp): uploads cached by Gradio,
+    quick-seek video copies, faceset thumbnails, leftovers. Never the OS temp
+    folder ('Use OS temp folder' on). Returns the bytes freed."""
+    import roop.globals
+    path = os.environ.get('TEMP')
+    if roop.globals.CFG.use_os_temp_folder or not path or not os.path.isdir(path):
+        return 0
+    before = folder_size(path)
+    clean_dir(path)
+    try:
+        from roop.capturer import forget_seek_copies
+        forget_seek_copies()
+    except Exception:
+        pass
+    return max(0, before - folder_size(path))
+
+
 def clean_dir(path: str):
     contents = os.listdir(path)
     for item in contents:

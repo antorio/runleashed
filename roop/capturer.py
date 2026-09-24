@@ -60,6 +60,9 @@ def get_video_frame(video_path: str, frame_number: int = 0, exact: bool = False)
         source = video_path
         if not exact and getattr(roop.globals, 'preview_seek_copy', True):
             source = _seek_copies.get(video_path, video_path)
+            if source != video_path and not os.path.isfile(source):
+                _seek_copies.pop(video_path, None)      # the temp folder was cleaned
+                source = video_path
         if video_path != current_video_path or current_capture is None:
             _release_video()
             current_capture = cv2.VideoCapture(source)
@@ -145,6 +148,15 @@ def get_video_frame_total(video_path: str) -> int:
     return video_frame_total
 
 
+def forget_seek_copies():
+    """The temp folder was emptied: read the original videos again."""
+    global current_source
+    with _lock:
+        _seek_copies.clear()
+        if current_capture is not None and current_source != current_video_path:
+            _release_video()
+
+
 def prepare_seek_copy(video_path):
     """Start making the quick-seek copy of a video in the background (once per
     video; a no-op when ffmpeg is missing or the copy exists)."""
@@ -175,7 +187,9 @@ def _encode_seek_copy(video_path):
     try:
         st = os.stat(video_path)
         key = hashlib.md5(f'{os.path.abspath(video_path)}|{st.st_size}|{st.st_mtime}'.encode()).hexdigest()[:16]
-        folder = os.path.join(tempfile.gettempdir(), 'runleashed_seek')
+        # the app's temp folder (./temp), which Settings > Clean temp folder
+        # and every start empty; tempfile's default may be the OS one
+        folder = os.path.join(os.environ.get('TEMP') or tempfile.gettempdir(), 'runleashed_seek')
         os.makedirs(folder, exist_ok=True)
         out = os.path.join(folder, key + '.mp4')
         t0 = time.time()

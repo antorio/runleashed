@@ -89,7 +89,9 @@ def facemgr_tab() -> None:
                     btn_remove_flagged = gr.Button("Remove flagged photos", variant="stop", size="sm", interactive=False,
                                                    scale=2, min_width=160)
                     btn_undo = gr.Button("Undo", size="sm", interactive=False, scale=2, min_width=120)
-                gallery = gr.Gallery(show_label=False, columns=5, height=560, object_fit="cover",
+                # no fixed height: with one, Gradio 5.9.1 clips the grid instead of
+                # scrolling it; the auto-height gallery scrolls (height set in ui/theme.py)
+                gallery = gr.Gallery(show_label=False, columns=5, object_fit="cover",
                                      allow_preview=False, preview=False, interactive=False,
                                      elem_id="facemgr_gallery")
                 with gr.Row():
@@ -145,11 +147,16 @@ def _thumb_dir():
     return _thumbs
 
 
+def _write_thumb(path, image):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    cv2.imwrite(path, cv2.resize(image, (192, 192), interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 88])
+
+
 def _add(face, image, source, file_hash=None):
     global _next_id
     _next_id += 1
     thumb = os.path.join(_thumb_dir(), f'{_next_id}.jpg')
-    cv2.imwrite(thumb, cv2.resize(image, (192, 192), interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 88])
+    _write_thumb(thumb, image)
     entries.append({'id': _next_id, 'image': image, 'face': face, 'thumb': thumb, 'source': source,
                     'hash': file_hash, 'kept': False,
                     'metrics': faceset_check.photo_metrics(face, image)})
@@ -293,6 +300,9 @@ def _mouth_open():
 def _render():
     """Values for the `view` outputs: gallery, summary, buttons, detail panel."""
     shown = [e for i in _view for e in [_by_id(i)] if e is not None]
+    for e in shown:
+        if not os.path.isfile(e['thumb']):          # the temp folder was cleaned
+            _write_thumb(e['thumb'], e['image'])
     selected_index = _view.index(_selected) if _selected in _view else None
     flagged = sum(1 for e in entries if _needs_attention(e))
     undo_label = f"Undo: {_undo[-1][0]}" if _undo else "Undo"
