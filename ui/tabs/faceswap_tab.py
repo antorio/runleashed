@@ -632,6 +632,11 @@ def map_mask_engine(selected_mask_engine, clip_text):
         mask_engine = "mask_clip2seg"
         if clip_text is None or len(clip_text) < 1:
           mask_engine = None
+        else:
+            import importlib.util
+            if importlib.util.find_spec('torch') is None:
+                gr.Warning('Clip2Seg needs PyTorch, which is not installed here: no mask')
+                mask_engine = None
     elif selected_mask_engine == "DFL XSeg":
         mask_engine = "mask_xseg"
     elif selected_mask_engine == "FF XSeg 1":

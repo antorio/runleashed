@@ -11,7 +11,10 @@ import warnings
 from typing import List
 import platform
 import signal
-import torch
+try:
+    import torch        # CUDA device selection only; a CPU-only install (Intel Mac) has none
+except ImportError:
+    torch = None
 import onnxruntime
 import pathlib
 import argparse
@@ -68,7 +71,8 @@ def decode_execution_providers(execution_providers: List[str]) -> List[str]:
         for i in range(len(list_providers)):
             if list_providers[i] == 'CUDAExecutionProvider':
                 list_providers[i] = ('CUDAExecutionProvider', {'device_id': roop.globals.cuda_device_id})
-                torch.cuda.set_device(roop.globals.cuda_device_id)
+                if torch is not None:
+                    torch.cuda.set_device(roop.globals.cuda_device_id)
                 break
     except:
         pass
@@ -169,10 +173,11 @@ def pre_check() -> bool:
         got = False
         if hf_hub_download is not None:
             try:
-                # download into an HF cache then copy to the exact path/name the
-                # loaders expect (they look for ../models[/subdir]/<filename>).
-                cached = hf_hub_download(repo_id=HF_REPO, filename=filename)
-                shutil.copyfile(cached, target_path)
+                # straight into ../models[/subdir]/<filename>, the path the
+                # loaders expect (no second copy in the HF cache: ~2.5 GB)
+                got_path = hf_hub_download(repo_id=HF_REPO, filename=filename, local_dir=target_dir)
+                if os.path.abspath(got_path) != os.path.abspath(target_path):
+                    shutil.copyfile(got_path, target_path)
                 got = True
             except Exception as e:
                 update_status(f'HF download failed for {filename} ({e}); falling back to direct URL')

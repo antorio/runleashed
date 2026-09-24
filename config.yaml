@@ -4,6 +4,7 @@ clear_output: false
 force_cpu: false
 max_threads: 8
 memory_limit: 0
+output_folder: ''
 output_image_format: png
 output_show_video: true
 output_template: '{file}_{time}'
@@ -13,6 +14,6 @@ provider: cpu
 selected_theme: Default
 server_name: ''
 server_port: 0
-server_share: true
+server_share: false
 use_os_temp_folder: false
 video_quality: 18

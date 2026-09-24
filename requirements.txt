@@ -9,8 +9,10 @@ opencv-python-headless==4.10.0.84
 onnx==1.18.0
 insightface==0.7.3
 psutil==5.9.6
-torch
-torchvision
+# PyTorch has no builds for Intel Macs beyond 2.2 (NumPy 1 only), so it is
+# skipped there; the app runs without it (only the Clip2Seg mask needs it).
+torch; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torchvision; platform_system != 'Darwin' or platform_machine != 'x86_64'
 onnxruntime-gpu==1.21.0; sys_platform != 'darwin'
 # macOS has no CUDA build -> plain onnxruntime (CPU / CoreML). Deliberately
 # UNPINNED: the newest available version differs by architecture (Apple

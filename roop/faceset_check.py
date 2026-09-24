@@ -165,6 +165,8 @@ def summary(rows, shape=True):
     sims = [r['sim'] for r in rows if r['sim'] is not None]
     if sims:
         text += f'; similarity to the rest: median {np.median(sims):.2f}'
+        if len(sims) >= 3 and np.median(sims) < 0.30:
+            text += ' (low: these photos do not look like one person)'
     if shape and any(r['shape'] is not None for r in rows):
         used = sum(1 for r in rows if r['shape'] in ('yes', 'fill'))
         text += f"; face shape uses {used} ({sum(1 for r in rows if r['shape'] == 'yes')} near-frontal with the mouth closed)"

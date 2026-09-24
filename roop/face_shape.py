@@ -278,10 +278,18 @@ def _smoothstep(v):
 
 
 def _angles(R):
-    """(yaw, pitch) in degrees from frontal: the reference frame's depth axis
-    (the face's forward direction) in the frame, R its rotation into it."""
-    n = np.abs(R[:, 2])
-    return np.degrees(np.arctan2(n[0], n[2])), np.degrees(np.arctan2(n[1], n[2]))
+    """(|yaw|, |pitch|) in degrees from frontal, R the reference frame's
+    rotation into the frame. The face's forward direction is taken in the
+    face's own upright frame: the in-plane tilt (roll, from the face's
+    horizontal axis) is turned back first -- otherwise a turned AND tilted head
+    reads as looking up (yaw 37 + roll 29 looked like pitch 23)."""
+    roll = np.arctan2(R[1, 0], R[0, 0])
+    c, s = np.cos(roll), np.sin(roll)
+    n = R[:, 2]
+    nx, ny, nz = c * n[0] + s * n[1], -s * n[0] + c * n[1], abs(n[2])
+    yaw = np.degrees(np.arctan2(abs(nx), nz))
+    pitch = np.degrees(np.arctan2(abs(ny), np.hypot(nx, nz)))
+    return yaw, pitch
 
 
 def pose_gate(R):

@@ -21,7 +21,7 @@
 ## Lingkungan
 - Fork roop-unleashed 4.4.x → v5.0.0. Baseline asli untuk diff: `../runleashed-440`. Referensi: `../facefusion` (3.4.1).
 - Render nyata di **Colab L4**: notebook clone `antorio/runleashed` → `mv config_colab.yaml config.yaml` → `pip install -r requirements.txt` → `python run.py` (UI lewat gradio.live). Python 3.13, gradio 5.9.1, onnxruntime-gpu 1.21, insightface 0.7.3 (dikompilasi saat install).
-- Lokal: Intel Mac (tanpa CUDA), tanpa folder `models/` → tidak bisa render; cukup untuk tes logika numpy/cv2.
+- Lokal (Intel Mac, tanpa CUDA): `./runMacOS.sh` → `.venv` Python 3.12 (3.14 tidak bisa: onnxruntime/insightface tidak punya build Intel), install ulang otomatis bila `requirements.txt` berubah, model ±2,5 GB diunduh sekali ke `models/` (langsung, tanpa salinan di cache HF), buka http://127.0.0.1:7860 (`server_share: false` di `config.yaml`; Colab memakai `config_colab.yaml`). CPU saja (onnxruntime 1.23.2). PyTorch tidak dipasang di Intel Mac (tidak ada build >2.2 / NumPy 2) → torch opsional di `core.py`/`utilities.py`, Clip2Seg tidak tersedia (peringatan). Untuk UI, faceset, preview; render video tetap di Colab.
 - Model: 15 file dari HF `antorio/runleashed-models` (`core.pre_check`); `buffalo_l` diunduh insightface dari GitHub.
 
 ## Arsitektur singkat

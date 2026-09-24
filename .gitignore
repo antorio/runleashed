@@ -40,3 +40,10 @@ ui/tabs/__pycache__/settings_tab.cpython-311.pyc
 models/
 temp/
 output/
+# local run (runMacOS.sh)
+.venv/
+models/
+.gradio/
+__pycache__/
+*.pyc
+.claude/launch.json

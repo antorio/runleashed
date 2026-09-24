@@ -7,7 +7,10 @@ import ssl
 import subprocess
 import sys
 import urllib
-import torch
+try:
+    import torch        # optional: CUDA checks and Clip2Seg; not installed on Intel Macs
+except ImportError:
+    torch = None
 import gradio
 import cv2
 import zipfile
@@ -302,7 +305,7 @@ def create_version_html() -> str:
     versions_html = f"""
 python: <span title="{sys.version}">{python_version}</span>
 •
-torch: {getattr(torch, '__long_version__',torch.__version__)}
+torch: {getattr(torch, '__long_version__', torch.__version__) if torch is not None else 'not installed'}
 •
 gradio: {gradio.__version__}
 """
@@ -313,7 +316,7 @@ def compute_cosine_distance(emb1, emb2) -> float:
     return distance.cosine(emb1, emb2)
 
 def has_cuda_device():
-    return torch.cuda is not None and torch.cuda.is_available()
+    return torch is not None and torch.cuda is not None and torch.cuda.is_available()
 
 
 def print_cuda_info():
