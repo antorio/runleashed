@@ -14,7 +14,8 @@ How:
   inner points -- nose and eye corners -- into one reference frame, so the head
   pose drops out and only the shape is left. (A 2D fit mixes pose into shape:
   the same face turned 10 degrees already looks like a different jaw.)
-- source shape: the median of the faceset photos, normalised; once per faceset.
+- source shape: the median of the faceset's near-frontal, mouth-closed photos
+  of its person, normalised; once per faceset.
 - target shape: normalised per frame; in a video render it is averaged along the
   face's track (TargetTracks), so the jaw offset does not jitter.
 - jaw offset = source jaw - target jaw in the reference frame; the chin part is
@@ -47,6 +48,13 @@ FOLLOW_LIP = np.clip(1.0 - np.abs(np.arange(17) - 8) / 5.0, 0.0, 1.0)
 MAX_SHIFT = 0.12       # largest jaw move, share of the jaw width
 RING = 1.6             # pinned ring: this far from the nose, relative to the jaw
 MIN_JACOBIAN = 0.3     # the warp must not fold (or even come close)
+# source photos used for the source shape: near-frontal with the mouth closed
+# (the jaw of a turned face is partly the model's guess; an open mouth or a
+# laugh moves the chin); the other photos only fill up to SHAPE_MIN_PHOTOS
+SHAPE_YAW, SHAPE_PITCH = 25.0, 20.0
+MOUTH_OPEN = 0.08      # inner-lip gap / outer eye-corner distance above this = open mouth
+SHAPE_MIN_PHOTOS = 3
+SAME_PERSON = 0.40     # cosine to the faceset's median identity (FaceSet 'robust' rule)
 
 # insightface's meanshape_68 (the 1k3d68 pose reference) at INNER: x right,
 # y down, z toward the camera
@@ -147,7 +155,9 @@ def _landmark_model():
     return _model or None
 
 
-def _source_landmarks(face, image):
+def source_landmarks(face, image):
+    """68x3 landmarks with depth for a source face: its own, or 1k3d68 run on
+    the photo it was found in."""
     lm = landmarks3d(face)
     if lm is not None or image is None:
         return lm
@@ -163,11 +173,61 @@ def _source_landmarks(face, image):
         return None
 
 
+def photo_geometry(L3):
+    """(yaw, pitch, mouth) of a face from its 68x3 landmarks: head angles in
+    degrees from frontal, mouth = inner-lip gap / outer eye-corner distance."""
+    s, R, t, sign = _fit(L3)
+    yaw, pitch = _angles(R)
+    c = (L3 - t) @ R / s
+    mouth = np.linalg.norm(c[66] - c[62]) / max(np.linalg.norm(c[45] - c[36]), 1e-6)
+    return float(yaw), float(pitch), float(mouth)
+
+
+def shape_usable(yaw, pitch, mouth):
+    return yaw <= SHAPE_YAW and pitch <= SHAPE_PITCH and mouth <= MOUTH_OPEN
+
+
+def _raw_embeddings(faceset):
+    """The faceset's per-photo embeddings (faces[0]'s own one is kept in
+    embeddings_backup once FaceSet.AverageEmbeddings has replaced it)."""
+    out = []
+    backup = getattr(faceset, 'embeddings_backup', None)
+    for i, f in enumerate(getattr(faceset, 'faces', [])):
+        e = backup if (i == 0 and backup is not None) else f.get('embedding')
+        out.append(None if e is None else np.asarray(e, np.float64).reshape(-1))
+    return out
+
+
+def pick_shape_photos(units, geometry):
+    """Which source photos make the source shape: indices, usable ones first,
+    and how many are usable. units: unit identity embeddings (or None);
+    geometry: (yaw, pitch, mouth) per photo (or None: no 3D landmarks).
+    A photo counts only if it shows the faceset's person (cosine >= SAME_PERSON
+    to the median identity, with 3+ embeddings). Usable = near-frontal with the
+    mouth closed; with fewer than SHAPE_MIN_PHOTOS usable, the closest others
+    fill up."""
+    valid = [u for u in units if u is not None]
+    same = [True] * len(units)
+    if len(valid) >= 3:
+        centre = np.median(np.stack(valid), axis=0)
+        centre = centre / (np.linalg.norm(centre) + 1e-12)
+        same = [u is None or float(u @ centre) >= SAME_PERSON for u in units]
+    scored = []
+    for i, g in enumerate(geometry):
+        if g is not None and same[i]:
+            yaw, pitch, mouth = g
+            scored.append((max(yaw / SHAPE_YAW, pitch / SHAPE_PITCH, mouth / MOUTH_OPEN), i))
+    scored.sort()
+    usable = sum(1 for score, _ in scored if score <= 1.0)
+    return [i for _, i in scored[:max(usable, min(SHAPE_MIN_PHOTOS, len(scored)))]], usable
+
+
 def source_shape(faceset):
-    """The faceset's face shape in the reference frame (68x3), or None. Cached
-    on the faceset once computed. A failure is not cached, so a faceset analysed
-    later with 3D landmarks still gets its shape; retrying costs nothing when
-    there is no landmark and no photo to run the model on."""
+    """The faceset's face shape in the reference frame (68x3), or None: the
+    median of the photos pick_shape_photos chooses. Cached on the faceset once
+    computed. A failure is not cached, so a faceset analysed later with 3D
+    landmarks still gets its shape; retrying costs nothing when there is no
+    landmark and no photo to run the model on."""
     shape = getattr(faceset, '_shape3d', None)
     if shape is not None:
         return shape
@@ -176,16 +236,17 @@ def source_shape(faceset):
         if shape is not None:
             return shape
         refs = getattr(faceset, 'ref_images', None) or []
-        shapes = []
-        for i, f in enumerate(getattr(faceset, 'faces', [])):
-            lm = _source_landmarks(f, refs[i] if i < len(refs) else None)
-            if lm is not None:
-                shapes.append(canonical(lm))
-        if not shapes:
+        faces = getattr(faceset, 'faces', [])
+        units = [None if e is None else e / (np.linalg.norm(e) + 1e-12) for e in _raw_embeddings(faceset)]
+        lms = [source_landmarks(f, refs[i] if i < len(refs) else None) for i, f in enumerate(faces)]
+        used, usable = pick_shape_photos(units, [None if lm is None else photo_geometry(lm) for lm in lms])
+        if not used:
             _warn_once('nosrc', 'no 3D landmarks for the source face; face shape is off for it')
             return None
-        shape = np.median(np.stack(shapes), axis=0)
+        shape = np.median(np.stack([canonical(lms[i]) for i in used]), axis=0)
         faceset._shape3d = shape
+        print(f'[face-shape] source shape from {len(used)} of {len(faces)} photos '
+              f'({usable} near-frontal with the mouth closed)')
         return shape
 
 
@@ -216,12 +277,17 @@ def _smoothstep(v):
     return v * v * (3.0 - 2.0 * v)
 
 
+def _angles(R):
+    """(yaw, pitch) in degrees from frontal: the reference frame's depth axis
+    (the face's forward direction) in the frame, R its rotation into it."""
+    n = np.abs(R[:, 2])
+    return np.degrees(np.arctan2(n[0], n[2])), np.degrees(np.arctan2(n[1], n[2]))
+
+
 def pose_gate(R):
     """1 for a face within 30 degrees of frontal (yaw) / 20 (pitch), fading to
     0 at 45 / 35. R: the reference frame's rotation into the frame."""
-    n = np.abs(R[:, 2])
-    yaw = np.degrees(np.arctan2(n[0], n[2]))
-    pitch = np.degrees(np.arctan2(n[1], n[2]))
+    yaw, pitch = _angles(R)
     return float(_smoothstep((45.0 - yaw) / 15.0) * _smoothstep((35.0 - pitch) / 15.0)), yaw
 
 

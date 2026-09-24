@@ -258,15 +258,17 @@ def extract_face_images(source_filename, video_info, extra_padding=-1.0, use_mul
     if faces is None:
         return face_data
 
+    if extra_padding > 0.0 and source_image.shape[:2] == (512, 512) and len(faces) > 0:
+        # already a 512 cut-out (a faceset PNG): kept whole, once, with its
+        # largest face -- not once per face in it
+        main = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+        return [[main, source_image]]
+
     i = 0
     for face in faces:
         (startX, startY, endX, endY) = face["bbox"].astype("int")
         startX, endX, startY, endY = clamp_cut_values(startX, endX, startY, endY, source_image)
         if extra_padding > 0.0:
-            if source_image.shape[:2] == (512, 512):
-                i += 1
-                face_data.append([face, source_image])
-                continue
 
             found = False
             for i in range(1, 3):
@@ -293,7 +295,13 @@ def extract_face_images(source_filename, video_info, extra_padding=-1.0, use_mul
                 testfaces = get_all_faces(face_temp)
                 if testfaces is not None and len(testfaces) > 0:
                     i += 1
-                    face_data.append([testfaces[0], face_temp])
+                    # the face this cut-out was made for is the largest one in
+                    # it (testfaces is sorted left to right, so [0] could be
+                    # part of a neighbour); remember its size in the photo
+                    main = max(testfaces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+                    bw, bh = face["bbox"][2] - face["bbox"][0], face["bbox"][3] - face["bbox"][1]
+                    main['source_size'] = float(max(bw, bh))
+                    face_data.append([main, face_temp])
                     found = True
                     break
 

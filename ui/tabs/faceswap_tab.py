@@ -1,5 +1,6 @@
 import os
 import traceback
+import numpy as np
 import gradio as gr
 import roop.utilities as util
 import roop.globals
@@ -377,11 +378,15 @@ def on_srcfile_changed(srcfiles, progress=gr.Progress()):
             util.unzip(source_path, unzipfolder)
             is_first = True
             face_set = FaceSet()
+            main_faces = []         # per PNG: index of its largest face (the one the PNG was cut for)
             for file in os.listdir(unzipfolder):
                 if file.endswith(".png"):
                     filename = os.path.join(unzipfolder,file)
                     progress(0, desc="Extracting faceset")      
                     SELECTION_FACES_DATA = extract_face_images(filename,  (False, 0))
+                    if SELECTION_FACES_DATA:
+                        areas = [(f[0].bbox[2] - f[0].bbox[0]) * (f[0].bbox[3] - f[0].bbox[1]) for f in SELECTION_FACES_DATA]
+                        main_faces.append(len(face_set.faces) + int(np.argmax(areas)))
                     for f in SELECTION_FACES_DATA:
                         face = f[0]
                         face.mask_offsets = (0,0,0,0,1,20)
@@ -392,6 +397,24 @@ def on_srcfile_changed(srcfiles, progress=gr.Progress()):
                             is_first = False
                         face_set.ref_images.append(get_image_frame(filename))
             if len(face_set.faces) > 0:
+                if len(main_faces) > 2:
+                    # a quick look at the photos, one face per PNG as Face
+                    # Management shows them (before the average replaces
+                    # faces[0]'s embedding); read-only
+                    try:
+                        from roop import faceset_check
+                        refs = face_set.ref_images
+                        rows = faceset_check.check([faceset_check.photo_metrics(face_set.faces[i], refs[i], geometry=False)
+                                                    for i in main_faces])
+                        text = faceset_check.summary(rows, shape=False)
+                        extra = len(face_set.faces) - len(main_faces)
+                        if extra:
+                            text += f' ({extra} more partial face(s) inside the PNGs)'
+                        print(f'[faceset] {os.path.basename(source_path)}: {text}')
+                        if any(r['removable'] for r in rows):
+                            gr.Info(f'Faceset: {text}. Details: Face Management > Check faceset')
+                    except Exception as e:
+                        print(f'[faceset] check skipped ({e})')
                 if len(face_set.faces) > 1:
                     face_set.AverageEmbeddings()
                 roop.globals.INPUT_FACESETS.append(face_set)
