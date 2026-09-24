@@ -29,7 +29,7 @@ DUPLICATE = 0.95
 SMALL_FACE = 128
 BLURRY = 0.40
 
-REMOVABLE = ('other person?', 'unlike the others', 'duplicate', 'small', 'blurry')
+REMOVABLE = ('other person?', 'unlike the others', 'duplicate', 'small', 'blurry', 'no face data')
 
 
 def _get(face, key):
@@ -82,7 +82,8 @@ def check(metrics):
     used, 'fill' = used to reach the minimum, 'no', None = no 3D landmarks)."""
     from roop.face_shape import pick_shape_photos
     n = len(metrics)
-    rows = [{'sim': None, 'flags': [], 'removable': False, 'shape': None} for _ in range(n)]
+    rows = [{'sim': None, 'flags': [], 'removable': False, 'shape': None,
+             'dup_of': None, 'sharp_rel': None, 'median_sim': None} for _ in range(n)]
     units = [m['unit'] for m in metrics]
     idx = [i for i, u in enumerate(units) if u is not None]
     for i in range(n):
@@ -102,6 +103,8 @@ def check(metrics):
         sims = [rows[i]['sim'] for i in idx]
         median = float(np.median(sims))
         for i in idx:
+            rows[i]['median_sim'] = median
+        for i in idx:
             if float(units[i] @ centre) < OTHER_PERSON:
                 rows[i]['flags'].append('other person?')
             elif len(idx) >= 5 and rows[i]['sim'] < median - UNLIKE_MARGIN:
@@ -110,6 +113,8 @@ def check(metrics):
     sharp_med = float(np.median(sharp)) if len(sharp) >= 3 else None
     poor = [False] * n
     for i, m in enumerate(metrics):
+        if sharp_med and m['sharp'] is not None:
+            rows[i]['sharp_rel'] = m['sharp'] / sharp_med
         if m['size'] is not None and m['size'] < SMALL_FACE:
             rows[i]['flags'].append(f"small ({m['size']:.0f} px)")
             poor[i] = True
@@ -138,6 +143,7 @@ def check(metrics):
                 for i in members:
                     if i != keep:
                         rows[i]['flags'].append(f'duplicate of #{keep + 1}')
+                        rows[i]['dup_of'] = keep
     geometry = [None if m['yaw'] is None else (m['yaw'], m['pitch'], m['mouth']) for m in metrics]
     if any(g is not None for g in geometry):
         used, usable = pick_shape_photos(units, geometry)

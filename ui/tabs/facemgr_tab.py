@@ -1,8 +1,18 @@
+"""Face Management: build a faceset (.fsz) of one person.
+
+Flow: 1 add photos (or faces from a video frame, or open a faceset to edit)
+-> 2 review: every photo is checked as it comes in; its status is on the photo
+itself, and clicking a photo shows why, with its own Remove / Keep buttons
+-> 3 save under a name.
+
+Photos are identified by the photo itself, never by a number, so nothing
+renumbers when one is removed. Every removal can be undone.
+"""
+import hashlib
 import os
 import re
 import shutil
 import tempfile
-import time
 import cv2
 import numpy as np
 import gradio as gr
@@ -11,106 +21,268 @@ import roop.globals
 from roop import faceset_check
 from roop.face_util import extract_face_images, get_all_faces
 from roop.capturer import get_video_frame, get_video_frame_total
-from typing import List, Tuple, Optional
-from roop.typing import Frame, Face
 
-selected_face_index = -1
-# The faces in the list, in gallery order: {'image': the 512 cut-out saved in
-# the .fsz, 'face': the face found in it, 'thumb': RGB copy for the gallery,
-# 'metrics': faceset_check.photo_metrics, computed on the first check}.
+# The photos in the faceset, in order. Each: {'id': int, 'image': the 512 BGR
+# cut-out saved in the .fsz, 'face': the face found in it, 'thumb': path of a
+# small JPEG for the gallery, 'metrics': faceset_check.photo_metrics,
+# 'source': where it came from, 'hash': of the source file, 'kept': warning
+# ignored by the user}.
 entries = []
-_seen_inputs = set()        # the Input Files list at the last change: Gradio sends the whole list each time
-_video_path = None          # video shown in "Cut face from video frame"
-_saved_name = None          # the .fsz just written: its own change event must not reload it
-_rows = None                # last check result for the current list, None = not checked / stale
+_rows = {}              # id -> faceset_check row for the current list
+_view = []              # ids shown in the gallery (the filter), in order
+_selected = None        # id of the photo shown on the right
+_undo = []              # [(label, [(position, entry), ...])], newest last
+_next_id = 0
+_video_path = None
 current_video_fps = 0
 
-REPORT_HEADERS = ["#", "Similarity", "Yaw", "Pitch", "Mouth", "Face px", "Face shape", "Flags"]
+SHOW_ALL, SHOW_ATTENTION = 'All photos', 'Needs attention'
+_filter = SHOW_ALL
+
+FLAG_TEXT = {           # flag prefix -> (label on the photo, explanation)
+    'other person?': ('Other person?',
+                      "This face does not match the rest of the faceset. If it is someone else, remove it: "
+                      "a wrong face pulls the averaged identity away."),
+    'unlike the others': ('Looks different',
+                          "Probably the same person, but unlike most of the other photos (another age, makeup, "
+                          "lighting or filter?). Keep it only if that look is what you want."),
+    'duplicate': ('Duplicate',
+                  "Nearly identical to another photo (shown below). A repeated shot gives that one moment extra "
+                  "weight; one of them is enough. The better of the two stays unmarked."),
+    'small': ('Too small',
+              "The face was small in the original photo. The identity model looks at 112 px, so a small face "
+              "carries little detail (128 px or more is better)."),
+    'blurry': ('Blurry', "Much less sharp than the other photos."),
+    'no face data': ('No face data', "No identity could be read from this face."),
+}
 
 
 def facemgr_tab() -> None:
     with gr.Tab("Face Management"):
-        gr.Markdown("# Create blending facesets\nCollect several reference faces of one person into a single .fsz faceset — more angles blend into a stronger swap.")
-        with gr.Row():
-            with gr.Column(scale=3, min_width=420):
+        gr.Markdown("## Build a faceset\nA faceset (.fsz) holds photos of **one person**. The swap blends them into one "
+                    "identity, so clean photos matter more than many: aim for 30–80 good photos of one look "
+                    "(same age, hair, makeup), mostly frontal plus some turned to either side.")
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=3, min_width=280):
+                gr.Markdown("### 1 · Add photos")
+                in_photos = gr.Files(label="Drop photos of the person (JPG / PNG)", file_count="multiple",
+                                     file_types=["image"], height=150)
+                with gr.Accordion("Faces from a video", open=False):
+                    in_video = gr.File(label="Video", file_types=["video"], height=90)
+                    video_frame = gr.Image(label="Frame", interactive=False, format="jpeg", height=220)
+                    video_slider = gr.Slider(1, 1, value=1, step=1, label="Frame", interactive=False)
+                    btn_add_frame = gr.Button("Add the faces in this frame", interactive=False)
+                with gr.Accordion("Edit an existing faceset", open=False):
+                    in_fsz = gr.File(label="Open a faceset (.fsz): replaces the photos in the list",
+                                     file_types=[".fsz"], height=90)
+                gr.Markdown("### 3 · Save")
+                save_name = gr.Textbox(value="faceset", label="Faceset name", max_lines=1)
+                btn_save = gr.Button("Save faceset", variant="primary", interactive=False)
+                save_file = gr.File(label="Saved faceset", interactive=False, visible=False)
+                save_msg = gr.Markdown()
+            with gr.Column(scale=6, min_width=420):
+                gr.Markdown("### 2 · Review")
+                summary = gr.Markdown(_summary_text())
+                with gr.Row(equal_height=True):
+                    show = gr.Radio([SHOW_ALL, SHOW_ATTENTION], value=SHOW_ALL, show_label=False, container=False,
+                                    scale=3, min_width=260)
+                    btn_remove_flagged = gr.Button("Remove flagged photos", variant="stop", size="sm", interactive=False,
+                                                   scale=2, min_width=160)
+                    btn_undo = gr.Button("Undo", size="sm", interactive=False, scale=2, min_width=120)
+                gallery = gr.Gallery(show_label=False, columns=5, height=560, object_fit="cover",
+                                     allow_preview=False, preview=False, interactive=False,
+                                     elem_id="facemgr_gallery")
                 with gr.Row():
-                    fb_files = gr.Files(label='Input Files', file_count="multiple", file_types=["image", "video"], interactive=True)
-                    fb_facesetfile = gr.Files(label='Faceset', file_count='single', file_types=['.fsz'], interactive=True)
-                videoimagefst = gr.Image(label="Cut face from video frame", height=512, interactive=False, visible=True, format="jpeg")
+                    btn_start_over = gr.Button("Start over", size="sm")
+                    btn_confirm_clear = gr.Button("Yes, remove all photos", variant="stop", size="sm", visible=False)
+                    btn_cancel_clear = gr.Button("Cancel", size="sm", visible=False)
+            with gr.Column(scale=3, min_width=280):
+                gr.Markdown("### Selected photo")
+                sel_image = gr.Image(show_label=False, interactive=False, height=260, format="jpeg")
+                sel_info = gr.Markdown("Click a photo to see its details.")
                 with gr.Row():
-                    frame_num_fst = gr.Slider(1, 1, value=1, label="Frame Number", info='0:00:00', step=1.0, interactive=False)
-                    fb_cutfromframe = gr.Button("Use faces from this frame", variant='secondary', interactive=False)
-            with gr.Column(scale=2, min_width=320):
-                faces = gr.Gallery(label="Faces in this Faceset", allow_preview=True, preview=True, height=512, object_fit="scale-down")
-                with gr.Row():
-                    fb_remove = gr.Button("Remove selected", variant='secondary')
-                    fb_update = gr.Button("Create/Update Faceset file", variant='primary')
-                    fb_clear = gr.Button("Clear all", variant='stop')
-                with gr.Row():
-                    fb_check = gr.Button("Check faceset", variant='secondary')
-                    fb_remove_flagged = gr.Button("Remove flagged", variant='secondary')
-        report_md = gr.Markdown()
-        report_df = gr.Dataframe(headers=REPORT_HEADERS, interactive=False, wrap=True, visible=False)
+                    btn_remove = gr.Button("Remove this photo", variant="stop", interactive=False)
+                    btn_keep = gr.Button("Keep anyway", interactive=False)
+                dup_image = gr.Image(label="Nearly identical to", interactive=False, height=150, format="jpeg",
+                                     visible=False)
 
-    report = [report_md, report_df]
-    video = [videoimagefst, frame_num_fst, fb_cutfromframe]
-    # every event here reads and changes the same list: one at a time
+    view = [gallery, summary, btn_remove_flagged, btn_undo, btn_save, sel_image, sel_info, btn_remove, btn_keep, dup_image]
+    detail = [sel_image, sel_info, btn_remove, btn_keep, dup_image]
     one = dict(concurrency_id='facemgr', concurrency_limit=1)
-    fb_facesetfile.change(fn=on_faceset_changed, inputs=[fb_facesetfile], outputs=[faces] + report, **one)
-    fb_files.change(fn=on_fb_files_changed, inputs=[fb_files], outputs=[faces] + video + report, **one)
-    fb_update.click(fn=on_update_clicked, outputs=[fb_facesetfile], **one)
-    fb_remove.click(fn=on_remove_clicked, outputs=[faces] + report, **one)
-    fb_clear.click(fn=on_clear_clicked, outputs=[faces, fb_files, fb_facesetfile] + video + report, **one)
-    fb_cutfromframe.click(fn=on_cutfromframe_clicked, inputs=[frame_num_fst], outputs=[faces] + report, **one)
-    frame_num_fst.release(fn=on_frame_num_fst_changed, inputs=[frame_num_fst], outputs=[videoimagefst], **one)
-    faces.select(fn=on_face_selected, **one)
-    fb_check.click(fn=on_check_clicked, outputs=[faces] + report, **one)
-    fb_remove_flagged.click(fn=on_remove_flagged_clicked, outputs=[faces] + report, **one)
+
+    in_photos.upload(fn=on_photos_added, inputs=[in_photos], outputs=[in_photos] + view, **one)
+    in_video.upload(fn=on_video_loaded, inputs=[in_video], outputs=[video_frame, video_slider, btn_add_frame], **one)
+    in_video.clear(fn=on_video_cleared, outputs=[video_frame, video_slider, btn_add_frame], **one)
+    video_slider.release(fn=on_video_frame, inputs=[video_slider], outputs=[video_frame], **one)
+    btn_add_frame.click(fn=on_add_frame, inputs=[video_slider], outputs=view, **one)
+    in_fsz.upload(fn=on_faceset_opened, inputs=[in_fsz], outputs=[in_fsz, save_name] + view, **one)
+    gallery.select(fn=on_photo_selected, outputs=detail, **one)
+    show.change(fn=on_show_changed, inputs=[show], outputs=view, **one)
+    btn_remove.click(fn=on_remove_selected, outputs=view, **one)
+    btn_keep.click(fn=on_keep_selected, outputs=view, **one)
+    btn_remove_flagged.click(fn=on_remove_flagged, outputs=view, **one)
+    btn_undo.click(fn=on_undo, outputs=view, **one)
+    btn_start_over.click(fn=lambda: [gr.Button(visible=False), gr.Button(visible=True), gr.Button(visible=True)],
+                         outputs=[btn_start_over, btn_confirm_clear, btn_cancel_clear], **one)
+    btn_cancel_clear.click(fn=lambda: [gr.Button(visible=True), gr.Button(visible=False), gr.Button(visible=False)],
+                           outputs=[btn_start_over, btn_confirm_clear, btn_cancel_clear], **one)
+    btn_confirm_clear.click(fn=on_start_over, outputs=[btn_start_over, btn_confirm_clear, btn_cancel_clear, save_file, save_msg] + view, **one)
+    btn_save.click(fn=on_save, inputs=[save_name], outputs=[save_file, save_msg], **one)
 
 
-# ----------------------------------------------------------------------------- list
+# ----------------------------------------------------------------------------- state
 
-def _add(face, image):
-    entries.append({'image': image, 'face': face, 'thumb': util.convert_to_gradio(image), 'metrics': None})
-
-
-def _changed():
-    """The list changed: the last check no longer applies. The selection stays
-    while its index still exists, as the gallery keeps showing it (it sends no
-    new select event for that)."""
-    global _rows, selected_face_index
-    _rows = None
-    if selected_face_index >= len(entries):
-        selected_face_index = -1
+_thumbs = None
 
 
-def _gallery():
-    items = []
-    for i, e in enumerate(entries):
-        caption = str(i + 1)
-        if _rows is not None and _rows[i]['removable']:
-            caption += ' ⚠ ' + ', '.join(f for f in _rows[i]['flags'] if f.startswith(faceset_check.REMOVABLE))
-        items.append((e['thumb'], caption))
-    return items
+def _thumb_dir():
+    """Folder for the gallery thumbnails; emptied once per app start."""
+    global _thumbs
+    if _thumbs is None:
+        _thumbs = os.path.join(os.environ.get('TEMP') or tempfile.gettempdir(), 'facemgr_thumbs')
+        shutil.rmtree(_thumbs, ignore_errors=True)
+        os.makedirs(_thumbs, exist_ok=True)
+    return _thumbs
 
 
-def _report():
-    """(markdown, dataframe) for the current check, hidden when there is none."""
-    if _rows is None:
-        return gr.Markdown(value=''), gr.Dataframe(visible=False)
-    table = []
-    for i, (e, r) in enumerate(zip(entries, _rows)):
-        m = e['metrics'] or {}
-        fmt = lambda v, f: '' if v is None else f.format(v)
-        table.append([i + 1, fmt(r['sim'], '{:.2f}'), fmt(m.get('yaw'), '{:.0f}°'), fmt(m.get('pitch'), '{:.0f}°'),
-                      '' if m.get('mouth') is None else ('open' if m['mouth'] > _mouth_open() else 'closed'),
-                      fmt(m.get('size'), '{:.0f}'), r['shape'] or '',
-                      ', '.join(r['flags'])])
-    text = ('**' + faceset_check.summary(_rows) + '.** ⚠ = suggested for removal (Remove flagged); the thresholds '
-            'are heuristics, so check those photos by eye. Similarity = to the average of the other photos. '
-            'Face shape: yes = used for "Face shape from source" (near-frontal, mouth closed), '
-            'fill = used to reach 3 photos, no = not used.')
-    return gr.Markdown(value=text), gr.Dataframe(value=table, headers=REPORT_HEADERS, visible=True)
+def _add(face, image, source, file_hash=None):
+    global _next_id
+    _next_id += 1
+    thumb = os.path.join(_thumb_dir(), f'{_next_id}.jpg')
+    cv2.imwrite(thumb, cv2.resize(image, (192, 192), interpolation=cv2.INTER_AREA), [cv2.IMWRITE_JPEG_QUALITY, 88])
+    entries.append({'id': _next_id, 'image': image, 'face': face, 'thumb': thumb, 'source': source,
+                    'hash': file_hash, 'kept': False,
+                    'metrics': faceset_check.photo_metrics(face, image)})
+
+
+def _by_id(i):
+    return next((e for e in entries if e['id'] == i), None)
+
+
+def _needs_attention(e):
+    r = _rows.get(e['id'])
+    return bool(r and r['removable'] and not e['kept'])
+
+
+def _refresh():
+    """Check the whole list again and rebuild the gallery's view."""
+    global _rows, _view, _selected
+    rows = faceset_check.check([e['metrics'] for e in entries]) if entries else []
+    _rows = {e['id']: r for e, r in zip(entries, rows)}
+    for e, r in zip(entries, rows):
+        r['dup_id'] = entries[r['dup_of']]['id'] if r.get('dup_of') is not None else None
+    _view = [e['id'] for e in entries if _filter == SHOW_ALL or _needs_attention(e)]
+    if _selected is not None and _selected not in _view:
+        _selected = None
+
+
+def _flag_key(flag):
+    return next((k for k in FLAG_TEXT if flag.startswith(k)), None)
+
+
+def _caption(e):
+    r = _rows.get(e['id'])
+    if not r:
+        return ''
+    keys = [k for k in (_flag_key(f) for f in r['flags'] if f.startswith(faceset_check.REMOVABLE)) if k]
+    if not keys:
+        return '✓'
+    if e['kept']:
+        return '✓ kept'
+    keys.sort(key=list(FLAG_TEXT).index)          # the most important reason first
+    return '⚠ ' + FLAG_TEXT[keys[0]][0] + (f' +{len(keys) - 1}' if len(keys) > 1 else '')
+
+
+def _summary_text():
+    n = len(entries)
+    if n == 0:
+        return ("**No photos yet.** Add photos of the person on the left. Each photo is checked as it comes in; "
+                "problems show on the photo itself.")
+    attention = [e for e in entries if _needs_attention(e)]
+    counts = {}
+    for e in attention:
+        for f in _rows[e['id']]['flags']:
+            k = _flag_key(f)
+            if k and f.startswith(faceset_check.REMOVABLE):
+                counts[FLAG_TEXT[k][0].lower()] = counts.get(FLAG_TEXT[k][0].lower(), 0) + 1
+    text = f"**{n} photo{'s' if n != 1 else ''}** · ✓ {n - len(attention)} fine"
+    if attention:
+        text += f" · ⚠ {len(attention)} need attention (" + ', '.join(f'{c} {k}' for k, c in counts.items()) + ")"
+    rows = [_rows[e['id']] for e in entries]
+    used = sum(1 for r in rows if r['shape'] in ('yes', 'fill'))
+    if any(r['shape'] is not None for r in rows):
+        text += f" · face shape uses {used}"
+    sims = [r['sim'] for r in rows if r['sim'] is not None]
+    if len(sims) >= 3 and np.median(sims) < 0.30:
+        text += "\n\n⚠ **These photos do not look like one person.** A faceset should hold one person only."
+    elif attention and _filter == SHOW_ALL:
+        text += "\n\nClick a ⚠ photo to see why, or choose *Needs attention* to see only those."
+    elif not attention and _filter == SHOW_ATTENTION:
+        text += "\n\nNothing needs attention. Choose *All photos* to see every photo."
+    return text
+
+
+def _detail():
+    """Right-hand panel for the selected photo."""
+    e = _by_id(_selected) if _selected is not None else None
+    if e is None:
+        return [gr.Image(value=None), gr.Markdown("Click a photo to see its details."),
+                gr.Button(interactive=False), gr.Button(value="Keep anyway", interactive=False),
+                gr.Image(value=None, visible=False)]
+    r, m = _rows.get(e['id'], {}), e['metrics']
+    lines = []
+    keys = sorted({k for k in (_flag_key(f) for f in r.get('flags', [])) if k}, key=list(FLAG_TEXT).index)
+    if keys and e['kept']:
+        lines.append(f"**✓ Kept** despite: {', '.join(FLAG_TEXT[k][0].lower() for k in keys)}.")
+    elif keys:
+        for k in keys:
+            extra = ''
+            if k == 'small' and m.get('size'):
+                extra = f" Here: {m['size']:.0f} px."
+            if k == 'blurry' and r.get('sharp_rel') is not None:
+                extra = f" Here: {100 * r['sharp_rel']:.0f}% of this faceset's typical sharpness."
+            label = FLAG_TEXT[k][0]
+            lines.append(f"**⚠ {label}{'' if label.endswith('?') else '.'}** {FLAG_TEXT[k][1]}{extra}")
+    else:
+        lines.append("**✓ Looks fine.**")
+    facts = []
+    if r.get('sim') is not None:
+        typical = f" (typical here: {r['median_sim']:.2f})" if r.get('median_sim') is not None else ''
+        facts.append(f"Match with the other photos: {r['sim']:.2f}{typical}")
+    if m.get('yaw') is not None:
+        facts.append(f"Head: turned {m['yaw']:.0f}°, up/down {m['pitch']:.0f}° · mouth "
+                     f"{'open' if m['mouth'] > _mouth_open() else 'closed'}")
+    if m.get('size'):
+        facts.append(f"Face size in the original photo: {m['size']:.0f} px")
+    shape = r.get('shape')
+    if shape == 'yes':
+        facts.append("Face shape from source: used")
+    elif shape == 'fill':
+        facts.append("Face shape from source: used to reach 3 photos (no better ones)")
+    elif shape == 'no':
+        facts.append("Face shape from source: not used (" + _shape_reason(m, r) + ")")
+    facts.append(f"From: {e['source']}")
+    text = '\n\n'.join(lines) + '\n\n' + '\n'.join(f'- {f}' for f in facts)
+    dup = _by_id(r.get('dup_id')) if r.get('dup_id') is not None else None
+    return [gr.Image(value=cv2.cvtColor(e['image'], cv2.COLOR_BGR2RGB)), gr.Markdown(text),
+            gr.Button(interactive=True),
+            gr.Button(value="Undo keep" if e['kept'] else "Keep anyway", interactive=bool(keys)),
+            gr.Image(value=cv2.cvtColor(dup['image'], cv2.COLOR_BGR2RGB), visible=True) if dup else gr.Image(value=None, visible=False)]
+
+
+def _shape_reason(m, r):
+    from roop.face_shape import MOUTH_OPEN, SHAPE_PITCH, SHAPE_YAW
+    reasons = []
+    if any(f.startswith('other person?') for f in r.get('flags', [])):
+        reasons.append('another person')
+    if m.get('yaw') is not None:
+        if m['yaw'] > SHAPE_YAW:
+            reasons.append(f"turned more than {SHAPE_YAW:.0f}°")
+        if m['pitch'] > SHAPE_PITCH:
+            reasons.append(f"up/down more than {SHAPE_PITCH:.0f}°")
+        if m['mouth'] > MOUTH_OPEN:
+            reasons.append('mouth open')
+    return ', '.join(reasons) or 'enough better photos'
 
 
 def _mouth_open():
@@ -118,223 +290,252 @@ def _mouth_open():
     return MOUTH_OPEN
 
 
-def _outputs():
-    return [_gallery(), *_report()]
+def _render():
+    """Values for the `view` outputs: gallery, summary, buttons, detail panel."""
+    shown = [e for i in _view for e in [_by_id(i)] if e is not None]
+    selected_index = _view.index(_selected) if _selected in _view else None
+    flagged = sum(1 for e in entries if _needs_attention(e))
+    undo_label = f"Undo: {_undo[-1][0]}" if _undo else "Undo"
+    return [gr.Gallery(value=[(e['thumb'], _caption(e)) for e in shown], selected_index=selected_index),
+            gr.Markdown(_summary_text()),
+            gr.Button(value=f"Remove {flagged} flagged photo{'s' if flagged != 1 else ''}" if flagged else "Remove flagged photos",
+                      interactive=flagged > 0),
+            gr.Button(value=undo_label, interactive=bool(_undo)),
+            gr.Button(interactive=bool(entries)),
+            *_detail()]
+
+
+def _remove(ids, label):
+    """Take the photos out, remembering where they were (for Undo)."""
+    removed = [(k, e) for k, e in enumerate(entries) if e['id'] in ids]
+    if not removed:
+        return
+    entries[:] = [e for e in entries if e['id'] not in ids]
+    _undo.append((label, removed))
+    del _undo[:-20]
+
+
+def _select_after_removal(position):
+    """Select the photo that took the removed one's place in the gallery."""
+    global _selected
+    _selected = _view[min(position, len(_view) - 1)] if _view else None
 
 
 # ----------------------------------------------------------------------------- events
 
-def on_faceset_changed(faceset, progress=gr.Progress()):
-    """Open a .fsz for editing: its faces REPLACE the list (one face per PNG)."""
-    global _saved_name
+def on_photos_added(files, progress=gr.Progress()):
+    """Add the faces of dropped photos; the drop zone is emptied again."""
+    if not files:
+        return [None] + _render()
+    known = {e['hash'] for e in entries if e['hash']}
+    skipped, no_face, added = [], [], 0
+    for k, f in enumerate(files):
+        progress(k / len(files), desc="Adding photos")
+        path = f.name if hasattr(f, 'name') else str(f)
+        with open(path, 'rb') as fh:
+            digest = hashlib.sha1(fh.read()).hexdigest()
+        if digest in known:
+            skipped.append(os.path.basename(path))
+            continue
+        known.add(digest)
+        found = extract_face_images(path, (False, 0), 0.5)
+        if not found:
+            no_face.append(os.path.basename(path))
+        for face, image in found:
+            _add(face, image, os.path.basename(path), digest)
+            added += 1
+    _refresh()
+    if no_face:
+        gr.Warning(f"No face found in {len(no_face)} photo(s): {', '.join(no_face[:5])}")
+    if skipped:
+        gr.Info(f"Already in the list, not added again: {', '.join(skipped[:5])}")
+    return [None] + _render()
 
-    if faceset is None:
-        return _outputs()
-    filename = faceset.name
-    if _saved_name is not None and os.path.basename(filename) == _saved_name:
-        _saved_name = None          # the file Create/Update just wrote: the list already is its content
-        return _outputs()
-    _saved_name = None
-    if not filename.lower().endswith('fsz'):
-        return _outputs()
 
-    had_faces = len(entries) > 0
-    entries.clear()
-    _changed()
+def on_video_loaded(video):
+    global _video_path, current_video_fps
+    if video is None:
+        return on_video_cleared()
+    _video_path = video.name if hasattr(video, 'name') else str(video)
+    total = max(1, int(get_video_frame_total(_video_path) or 1))
+    current_video_fps = util.detect_fps(_video_path) or 1
+    frame = get_video_frame(_video_path, 1, exact=True)
+    return [gr.Image(value=None if frame is None else util.convert_to_gradio(frame)),
+            gr.Slider(value=1, minimum=1, maximum=total, interactive=True),
+            gr.Button(interactive=frame is not None)]
+
+
+def on_video_cleared():
+    global _video_path
+    _video_path = None
+    return [gr.Image(value=None), gr.Slider(value=1, minimum=1, maximum=1, interactive=False), gr.Button(interactive=False)]
+
+
+def on_video_frame(frame_num):
+    if _video_path is None:
+        return gr.Image()
+    frame = get_video_frame(_video_path, int(frame_num), exact=True)
+    return gr.Image(value=None if frame is None else util.convert_to_gradio(frame))
+
+
+def on_add_frame(frame_num):
+    if _video_path is None:
+        return _render()
+    found = extract_face_images(_video_path, (True, int(frame_num)), 0.5)
+    if not found:
+        gr.Warning('No face found in this frame')
+    for face, image in found:
+        _add(face, image, f"{os.path.basename(_video_path)}, frame {int(frame_num)}")
+    _refresh()
+    return _render()
+
+
+def on_faceset_opened(fsz, progress=gr.Progress()):
+    """Open a .fsz to edit: its photos replace the list (Undo brings the old
+    list back). The save name is taken from the file."""
+    global _selected
+    if fsz is None:
+        return [None, gr.Textbox()] + _render()
+    path = fsz.name if hasattr(fsz, 'name') else str(fsz)
+    if entries:
+        _remove({e['id'] for e in entries}, 'open faceset')
+    _selected = None
     folder = tempfile.mkdtemp(prefix='faceset_')
+    missing = []
     try:
-        util.unzip(filename, folder)
+        util.unzip(path, folder)
         pngs = [f for f in os.listdir(folder) if f.lower().endswith('.png')]
         pngs.sort(key=lambda f: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', f)])
-        missing = []
         for k, file in enumerate(pngs):
-            progress(k / max(len(pngs), 1), desc="Retrieving faces from Faceset File")
-            path = os.path.join(folder, file)
-            image = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            progress(k / max(len(pngs), 1), desc="Opening faceset")
+            p = os.path.join(folder, file)
+            image = cv2.imdecode(np.fromfile(p, dtype=np.uint8), cv2.IMREAD_COLOR)
             if image is None:
                 missing.append(file)
                 continue
             if image.shape[:2] == (512, 512):
-                # a faceset cut-out: keep it as it is, with its main face
                 found = get_all_faces(image)
                 if not found:
                     missing.append(file)
                     continue
-                _add(max(found, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1])), image)
+                _add(max(found, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1])), image, file)
             else:
-                # another tool's faceset (whole photos): cut out each face
-                found = extract_face_images(path, (False, 0), 0.5)
+                found = extract_face_images(p, (False, 0), 0.5)
                 if not found:
                     missing.append(file)
-                for face, image in found:
-                    _add(face, image)
-        if missing:
-            gr.Warning(f"No face detected in {len(missing)} image(s) of the faceset: {', '.join(missing[:5])}")
-        if had_faces:
-            gr.Info('The faceset file replaced the faces that were in the list')
+                for face, img in found:
+                    _add(face, img, file)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    return _outputs()
+    _refresh()
+    if missing:
+        gr.Warning(f"No face found in {len(missing)} image(s) of the faceset")
+    name = re.sub(r'[^\w\-]+', '_', os.path.splitext(os.path.basename(path))[0]).strip('_') or 'faceset'
+    return [None, gr.Textbox(value=name)] + _render()
 
 
-def on_fb_files_changed(inputfiles, progress=gr.Progress()):
-    """Add the faces of NEW input files (Gradio sends the whole list each time;
-    files already added are skipped). A video goes to the frame cutter."""
-    global _video_path, current_video_fps
-
-    video_image, slider, cut_button = gr.update(), gr.update(), gr.update()
-    current = [f.name for f in inputfiles or []]
-    # only files that were not in the list at the last change; a file taken
-    # out of Input Files and put back counts as new again
-    new = [p for p in current if p not in _seen_inputs]
-    _seen_inputs.clear()
-    _seen_inputs.update(current)
-    added = 0
-    for k, source_path in enumerate(new):
-        progress(k / max(len(new), 1), desc="Retrieving faces from images")
-        if util.has_image_extension(source_path):
-            roop.globals.source_path = source_path
-            for face, image in extract_face_images(source_path, (False, 0), 0.5):
-                _add(face, image)
-                added += 1
-        elif util.is_video(source_path) or source_path.lower().endswith('gif'):
-            _video_path = source_path
-            total_frames = get_video_frame_total(source_path)
-            current_video_fps = util.detect_fps(source_path)
-            cut_button = gr.Button(interactive=True)
-            video_image, slider = display_video_frame(source_path, 1, total_frames)
-    if added:
-        _changed()
-    return [_gallery(), video_image, slider, cut_button, *_report()]
+def on_photo_selected(evt: gr.SelectData):
+    global _selected
+    if evt is not None and 0 <= evt.index < len(_view):
+        _selected = _view[evt.index]
+    return _detail()
 
 
-def display_video_frame(filename: str, frame_num: int, total: int=0) -> Tuple[gr.Image, gr.Slider]:
-    global current_video_fps
-
-    current_frame = get_video_frame(filename, frame_num, exact=True)
-    if current_video_fps == 0:
-        current_video_fps = 1
-    secs = (frame_num - 1) / current_video_fps
-    minutes = secs / 60
-    secs = secs % 60
-    hours = minutes / 60
-    minutes = minutes % 60
-    milliseconds = (secs - int(secs)) * 1000
-    timeinfo = f"{int(hours):0>2}:{int(minutes):0>2}:{int(secs):0>2}.{int(milliseconds):0>3}"
-    if total > 0:
-        return gr.Image(value=util.convert_to_gradio(current_frame), interactive=True), gr.Slider(info=timeinfo, minimum=1, maximum=total, interactive=True)
-    return gr.Image(value=util.convert_to_gradio(current_frame), interactive=True), gr.Slider(info=timeinfo, interactive=True)
+def on_show_changed(value):
+    global _filter, _selected
+    _filter = value
+    _refresh()
+    if _selected is None and _view and _filter == SHOW_ATTENTION:
+        _selected = _view[0]
+    return _render()
 
 
-def on_face_selected(evt: gr.SelectData) -> None:
-    global selected_face_index
-
-    if evt is not None:
-        selected_face_index = evt.index
-
-
-def on_frame_num_fst_changed(frame_num: int):
-    if _video_path is None:
-        return gr.update()
-    video_image, _ = display_video_frame(_video_path, frame_num, 0)
-    return video_image
+def on_remove_selected():
+    if _selected is None or _by_id(_selected) is None:
+        return _render()
+    position = _view.index(_selected) if _selected in _view else 0
+    _remove({_selected}, 'remove photo')
+    _refresh()
+    _select_after_removal(position)
+    return _render()
 
 
-def on_cutfromframe_clicked(frame_num: int):
-    if _video_path is None:
-        return _outputs()
-    found = extract_face_images(_video_path, (True, frame_num), 0.5)
-    for face, image in found:
-        _add(face, image)
-    if found:
-        _changed()
-    return _outputs()
+def on_keep_selected():
+    global _selected
+    e = _by_id(_selected) if _selected is not None else None
+    if e is None:
+        return _render()
+    position = _view.index(_selected) if _selected in _view else 0
+    e['kept'] = not e['kept']
+    _refresh()
+    if _selected not in _view:          # "Needs attention" hides it now: go on to the next one
+        _select_after_removal(position)
+    return _render()
 
 
-def on_remove_clicked():
-    global selected_face_index
-
-    if not 0 <= selected_face_index < len(entries):
-        gr.Warning('Select a face in the gallery first')
-        return _outputs()
-    entries.pop(selected_face_index)
-    _changed()
-    return _outputs()
-
-
-def on_clear_clicked():
-    global _video_path, _saved_name, selected_face_index
-
-    entries.clear()
-    _seen_inputs.clear()
-    _video_path = None
-    _saved_name = None
-    selected_face_index = -1
-    _changed()
-    return [_gallery(), None, None, gr.Image(value=None), gr.Slider(value=1, maximum=1, interactive=False),
-            gr.Button(interactive=False), *_report()]
+def on_remove_flagged():
+    global _selected
+    flagged = {e['id'] for e in entries if _needs_attention(e)}
+    if not flagged:
+        return _render()
+    if len(flagged) == len(entries):
+        gr.Warning('Every photo is flagged: nothing removed. Check them one by one.')
+        return _render()
+    _remove(flagged, f'remove {len(flagged)} flagged')
+    _refresh()
+    if _selected in flagged:
+        _selected = None
+    gr.Info(f"Removed {len(flagged)} photo(s). Undo brings them back.")
+    return _render()
 
 
-def on_update_clicked() -> Optional[str]:
-    global _saved_name
+def on_undo():
+    global _selected
+    if not _undo:
+        return _render()
+    label, removed = _undo.pop()
+    if label == 'open faceset':
+        entries.clear()             # the opened faceset goes, the old list comes back
+    for position, e in sorted(removed, key=lambda x: x[0]):
+        entries.insert(min(position, len(entries)), e)
+    _refresh()
+    if len(removed) == 1:
+        _selected = removed[0][1]['id'] if removed[0][1]['id'] in _view else _selected
+    return _render()
 
-    if len(entries) < 1:
-        gr.Warning(f"No faces to create faceset from!")
-        return None
+
+def on_start_over():
+    global _selected
+    if entries:
+        _remove({e['id'] for e in entries}, 'start over')
+    _selected = None
+    _refresh()
+    return [gr.Button(visible=True), gr.Button(visible=False), gr.Button(visible=False),
+            gr.File(value=None, visible=False), gr.Markdown('')] + _render()
+
+
+def on_save(name):
+    if not entries:
+        gr.Warning('No photos to save')
+        return [gr.File(visible=False), gr.Markdown('')]
+    base = re.sub(r'[^\w\-]+', '_', (name or '').strip()).strip('_') or 'faceset'
+    target = os.path.join(roop.globals.output_path, base + '.fsz')
+    n = 2
+    while os.path.exists(target):
+        target = os.path.join(roop.globals.output_path, f'{base}_{n}.fsz')
+        n += 1
     folder = tempfile.mkdtemp(prefix='faceset_')
     try:
-        imgnames = []
-        for index, e in enumerate(entries):
-            filename = os.path.join(folder, f'{index}.png')
-            cv2.imwrite(filename, e['image'])
-            imgnames.append(filename)
-        # a new name each time: an earlier faceset in the folder is not overwritten
-        base = f"faceset_{time.strftime('%Y%m%d_%H%M%S')}"
-        finalzip = os.path.join(roop.globals.output_path, base + '.fsz')
-        n = 2
-        while os.path.exists(finalzip):
-            finalzip = os.path.join(roop.globals.output_path, f'{base}_{n}.fsz')
-            n += 1
-        util.zip(imgnames, finalzip)
+        names = []
+        for k, e in enumerate(entries):
+            p = os.path.join(folder, f'{k}.png')
+            cv2.imwrite(p, e['image'])
+            names.append(p)
+        util.zip(names, target)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    _saved_name = os.path.basename(finalzip)
-    gr.Info(f'Saved {len(entries)} faces to {finalzip}')
-    return finalzip
-
-
-def on_check_clicked(progress=gr.Progress()):
-    global _rows
-
-    if not entries:
-        gr.Warning('No faces to check')
-        return _outputs()
-    for k, e in enumerate(entries):
-        if e['metrics'] is None:
-            progress(k / len(entries), desc="Checking faces")
-            e['metrics'] = faceset_check.photo_metrics(e['face'], e['image'])
-    _rows = faceset_check.check([e['metrics'] for e in entries])
-    return _outputs()
-
-
-def on_remove_flagged_clicked(progress=gr.Progress()):
-    global _rows
-
-    if _rows is None:
-        on_check_clicked(progress)
-    if _rows is None:
-        return _outputs()
-    keep = [e for e, r in zip(entries, _rows) if not r['removable']]
-    removed = len(entries) - len(keep)
-    if removed == 0:
-        gr.Info('Nothing flagged for removal')
-        return _outputs()
-    if not keep:
-        gr.Warning('Every face is flagged: nothing removed. Check the photos by eye and remove them with "Remove selected".')
-        return _outputs()
-    entries[:] = keep
-    _changed()
-    # check the rest again: the average of the others changed
-    _rows = faceset_check.check([e['metrics'] for e in entries]) if entries else None
-    gr.Info(f'Removed {removed} flagged face(s)')
-    return _outputs()
+    flagged = sum(1 for e in entries if _needs_attention(e))
+    note = f" ({flagged} still flagged)" if flagged else ''
+    renamed = f" `{base}.fsz` already existed, so it was saved under a new name." if os.path.basename(target) != base + '.fsz' else ''
+    return [gr.File(value=target, visible=True),
+            gr.Markdown(f"Saved **{len(entries)} photos**{note} to `{target}`.{renamed}")]
