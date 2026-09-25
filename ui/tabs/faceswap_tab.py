@@ -2,9 +2,9 @@
 ui/tabs/faceswap_state.py (S).
 
 Layout, left to right in the order you work (compact for a 1920x1080 screen):
-  Source faces · Target files · Faces to replace (titled boxes)  |  preview on
-  top, then frame (◀ ▶, arrow keys) · range · view · Ready + Start / Stop ·
-  status  |  settings in boxes (Swap, Expression, Occlusion, Enhance,
+  Source faces · Target files · Faces to replace · Swap (titled boxes)  |
+  preview on top, then frame (◀ ▶, arrow keys) · range · view · Ready +
+  Start / Stop · status  |  settings in boxes (Expression, Occlusion, Enhance,
   Detection & tracking, Video output), defaults at the bottom. Results are
   not shown here: they are in the output folder the status line names.
 
@@ -174,7 +174,7 @@ def faceswap_tab():
                                                    placeholder="or a path: file or folder (Enter)")
                         C['btn_tgt_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
-                with gr.Accordion(_title("Faces to replace", 'faces'), open=True, elem_classes="fs-box fs-last") as acc_faces:
+                with gr.Accordion(_title("Faces to replace", 'faces'), open=True, elem_classes="fs-box") as acc_faces:
                     C['acc_faces'] = acc_faces
                     with gr.Row(equal_height=True):
                         mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
@@ -197,6 +197,14 @@ def faceswap_tab():
                         C['people_x'] = gr.Textbox(elem_id="people_x", elem_classes="fs-hidden", show_label=False, container=False)
                         _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01,
                                                   label="Match tolerance (higher = looser)"))
+
+                with gr.Accordion(f"Swap · {S.summary('swap')}", open=True, elem_classes="fs-box fs-last") as acc_swap:
+                    with gr.Row():
+                        _s('resolution', gr.Dropdown(S.RESOLUTIONS, value=V['resolution'], label="Resolution"))
+                        _s('passes', gr.Slider(1, 5, value=V['passes'], step=1, label="Passes (1 = normal)"))
+                    with gr.Row():
+                        _s('identity', gr.Slider(0.0, 1.0, value=V['identity'], step=0.05, label="Identity boost"))
+                        _s('face_shape', gr.Slider(0.0, 1.0, value=V['face_shape'], step=0.05, label="Source jaw & chin"))
 
             # --------------------------------------------------------------- centre: preview on top, controls below
             with gr.Column(scale=5, min_width=460, elem_id="center_stage", elem_classes="fs-box fs-first fs-last"):
@@ -241,15 +249,7 @@ def faceswap_tab():
 
             # --------------------------------------------------------------- right: settings
             with gr.Column(scale=3, min_width=300, elem_id="fs_settings"):
-                with gr.Accordion(f"Swap · {S.summary('swap')}", open=True, elem_classes="fs-box fs-first") as acc_swap:
-                    with gr.Row():
-                        _s('resolution', gr.Dropdown(S.RESOLUTIONS, value=V['resolution'], label="Resolution"))
-                        _s('passes', gr.Slider(1, 5, value=V['passes'], step=1, label="Passes (1 = normal)"))
-                    with gr.Row():
-                        _s('identity', gr.Slider(0.0, 1.0, value=V['identity'], step=0.05, label="Identity boost"))
-                        _s('face_shape', gr.Slider(0.0, 1.0, value=V['face_shape'], step=0.05, label="Source jaw & chin"))
-
-                with gr.Accordion(f"Expression · {S.summary('expression')}", open=True, elem_classes="fs-box") as acc_expr:
+                with gr.Accordion(f"Expression · {S.summary('expression')}", open=True, elem_classes="fs-box fs-first") as acc_expr:
                     er = _s('er', gr.Checkbox(value=V['er'], label="Restore target expression (LivePortrait)"))
                     with gr.Column(visible=V['er']) as er_col:
                         with gr.Row():
@@ -269,7 +269,7 @@ def faceswap_tab():
 
                 with gr.Accordion(f"Occlusion · {S.summary('occlusion')}", open=False, elem_classes="fs-box") as acc_occ:
                     engine = _s('mask_engine', gr.Dropdown(list(S.MASK_ENGINES), value=V['mask_engine'],
-                                                           label="Mask model (hands, hair … stay original)"))
+                                                           label="Mask model", show_label=False))
                     with gr.Column(visible=V['mask_engine'] == 'Clip2Seg (by text)') as clip_col:
                         _s('mask_objects', gr.Textbox(value=V['mask_objects'], label="Objects to keep (comma separated)",
                                                       max_lines=1))
@@ -296,7 +296,7 @@ def faceswap_tab():
                     _s('color_transfer', gr.Checkbox(value=V['color_transfer'], label="Match colours to target"))
 
                 with gr.Accordion(f"Enhance · {S.summary('enhance')}", open=False, elem_classes="fs-box") as acc_enh:
-                    enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Enhancer"))
+                    enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Enhancer", show_label=False))
                     with gr.Column(visible=V['enhancer'] != 'None') as enh_col:
                         _s('enhancer_blend', gr.Slider(0.0, 1.0, value=V['enhancer_blend'], step=0.01, label="Strength"))
                         _s('mask_after_enhancer', gr.Checkbox(value=V['mask_after_enhancer'], label="Occlusion mask after enhancer"))
