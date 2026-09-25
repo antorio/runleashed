@@ -71,7 +71,7 @@ class FFMPEG_VideoWriter:
 
     def __init__(self, filename, size, fps, codec="libx265", crf=14, audiofile=None,
                  preset="medium", bitrate=None,
-                 logfile=None, threads=None, ffmpeg_params=None):
+                 logfile=None, threads=None, ffmpeg_params=None, out_fps=None):
 
         if logfile is None:
             logfile = sp.PIPE
@@ -110,6 +110,8 @@ class FFMPEG_VideoWriter:
             '-crf', str(crf)
             #'-preset', preset,
         ])
+        if out_fps:
+            cmd.extend(['-r', str(out_fps)])      # output rate != input rate: resample
         if ffmpeg_params is not None:
             cmd.extend(ffmpeg_params)
         if bitrate is not None:

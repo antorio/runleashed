@@ -35,8 +35,10 @@ def extract_frames(target_path : str, trim_frame_start, trim_frame_end, fps : fl
     commands = ['-i', target_path, '-q:v', '1', '-pix_fmt', 'rgb24', ]
     if trim_frame_start is not None and trim_frame_end is not None:
         commands.extend([ '-vf', 'trim=start_frame=' + str(trim_frame_start) + ':end_frame=' + str(trim_frame_end) + ',fps=' + str(fps) ])
-    commands.extend(['-vsync', '0', os.path.join(temp_directory_path, '%06d.' + roop.globals.CFG.output_image_format)])
-    return run_ffmpeg(commands)
+    out = os.path.join(temp_directory_path, '%06d.' + roop.globals.CFG.output_image_format)
+    # every frame passed through as it is: -fps_mode since ffmpeg 5.1, -vsync
+    # before (removed in ffmpeg 9)
+    return run_ffmpeg(commands + ['-fps_mode', 'passthrough', out]) or run_ffmpeg(commands + ['-vsync', '0', out])
 
 
 def create_video(target_path: str, dest_filename: str, fps: float = 24.0, temp_directory_path: str = None) -> None:

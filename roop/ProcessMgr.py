@@ -217,7 +217,9 @@ class ProcessMgr():
         return None
 
 
-    def initialize(self, input_faces, target_faces, options):
+    def initialize(self, input_faces, target_faces, options, release_idle=True):
+        # release_idle=False (the Face Swap tab's Mask view): leave the idle
+        # models of a finished render alone, the next preview takes them.
         # Own copies of the face lists: the UI can add/remove faces while a
         # render runs, and the render must keep using the faces it started with.
         self.input_face_datas = list(input_faces)
@@ -274,7 +276,8 @@ class ProcessMgr():
         for p in self.processors:
             if _plugin_key(p) not in options.processors:
                 p.Release()
-        _release_idle_processors(keep=options.processors.keys())
+        if release_idle:
+            _release_idle_processors(keep=options.processors.keys())
 
         newprocessors = []
         for key, extoption in options.processors.items():
@@ -313,17 +316,8 @@ class ProcessMgr():
 
 
 
-        if isinstance(self.options.imagemask, dict) and self.options.imagemask.get("layers") and len(self.options.imagemask["layers"]) > 0:
-            self.options.imagemask  = self.options.imagemask.get("layers")[0]
-            # Get rid of alpha
-            self.options.imagemask = cv2.cvtColor(self.options.imagemask, cv2.COLOR_RGBA2GRAY)
-            if np.any(self.options.imagemask):
-                mo = self.input_face_datas[0].faces[0].mask_offsets
-                self.options.imagemask = self.blur_area(self.options.imagemask, mo[4], mo[5])
-                self.options.imagemask = self.options.imagemask.astype(np.float32) / 255
-                self.options.imagemask = cv2.cvtColor(self.options.imagemask, cv2.COLOR_GRAY2RGB)
-            else:
-                self.options.imagemask = None
+        self.options.imagemask = self.manual_mask(self.options.imagemask)
+        self._imagemask_fitted = None
 
         self.options.frame_processing = False
         for p in self.processors:
@@ -426,6 +420,13 @@ class ProcessMgr():
                 # the read thread tags every frame with its index so the
                 # temporal section can run in true frame order (FrameSequencer)
                 frame_index, frame = item
+                if not roop.globals.processing:
+                    # stopped: drop the frames still queued instead of swapping
+                    # them first. The placeholder keeps the writer's round robin
+                    # over the per-thread queues aligned (it skips (True, None)).
+                    self.processed_queue[threadindex].put((True, None))
+                    del frame
+                    continue
                 if self.options.frame_processing:
                     for p in self.processors:
                         frame = p.Run(frame)
@@ -508,7 +509,14 @@ class ProcessMgr():
         self.output_to_cam = output_method == "Virtual Camera" or output_method == "Both"
 
         if self.output_to_file:
-            self.videowriter = FFMPEG_VideoWriter(target_video, (width, height), fps, codec=roop.globals.video_encoder, crf=roop.globals.video_quality, audiofile=None)
+            # frames go in at the source's rate; a different output rate is
+            # resampled by ffmpeg (frames dropped / repeated, same duration, so
+            # the audio still fits) instead of re-timing every frame
+            from roop.utilities import detect_fps
+            src_fps = float(detect_fps(source_video) or fps)
+            out_fps = fps if abs(float(fps) - src_fps) > 0.01 else None
+            self.videowriter = FFMPEG_VideoWriter(target_video, (width, height), src_fps if out_fps else fps, codec=roop.globals.video_encoder,
+                                                  crf=roop.globals.video_quality, audiofile=None, out_fps=out_fps)
         if self.output_to_cam:
             from roop.StreamWriter import StreamWriter
             self.streamwriter = StreamWriter((width, height), int(fps))
@@ -622,6 +630,15 @@ class ProcessMgr():
 
 
     def process_frame(self, frame:Frame, frame_index=None):
+        result = self._process_frame(frame, frame_index)
+        # the painted keep-original mask: on the final upright frame (after a
+        # rotated retry), against the original frame
+        if result is not None and getattr(self.options, 'imagemask', None) is not None:
+            result = self.simple_blend_with_mask(result, frame, self.fitted_imagemask(frame))
+        return result
+
+
+    def _process_frame(self, frame:Frame, frame_index=None):
         if len(self.input_face_datas) < 1 and not self.options.show_face_masking:
             return frame
         temp_frame = frame.copy()
@@ -810,9 +827,53 @@ class ProcessMgr():
 
         #maskprocessor = next((x for x in self.processors if x.type == 'mask'), None)
 
-        if self.options.imagemask is not None and self.options.imagemask.shape == frame.shape:
-            temp_frame = self.simple_blend_with_mask(temp_frame, frame, self.options.imagemask)
         return num_faces_found, temp_frame
+
+
+    def set_manual_mask(self, painted):
+        """Use this painting (editor layer or dict; None = none) from now on."""
+        self.options.imagemask = self.manual_mask(painted)
+        self._imagemask_fitted = None
+
+
+    @staticmethod
+    def manual_mask(imagemask):
+        """The painted "keep the original here" mask: an editor dict or a layer
+        array (RGBA: painted = alpha, RGB/gray: painted = bright). Returns a float
+        mask in [0, 1] at the painting's own size, feathered, or None when
+        nothing is painted."""
+        layer = imagemask
+        if isinstance(layer, dict):
+            layers = layer.get("layers") or []
+            layer = layers[0] if len(layers) > 0 else None
+        if layer is None:
+            return None
+        layer = np.asarray(layer)
+        if layer.ndim == 3 and layer.shape[2] == 4:
+            painted = layer[:, :, 3]
+        elif layer.ndim == 3:
+            painted = cv2.cvtColor(layer[:, :, :3], cv2.COLOR_RGB2GRAY)
+        else:
+            painted = layer
+        painted = np.where(painted > 0, 255, 0).astype(np.uint8)
+        if not np.any(painted):
+            return None
+        k = max(3, int(round(max(painted.shape) / 200)) * 2 + 1)      # a soft edge, ~1% of the painting
+        return cv2.GaussianBlur(painted, (k, k), 0).astype(np.float32) / 255
+
+
+    def fitted_imagemask(self, frame):
+        """The manual mask at this frame's size (painted on the downscaled
+        preview, used on full-size frames), as H x W x 1."""
+        h, w = frame.shape[:2]
+        cached = getattr(self, '_imagemask_fitted', None)
+        if cached is None or cached.shape[:2] != (h, w):
+            m = self.options.imagemask
+            if m.shape[:2] != (h, w):
+                m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+            cached = m[:, :, None]
+            self._imagemask_fitted = cached
+        return cached
 
 
     def rotation_action(self, original_face:Face, frame:Frame):
@@ -1001,6 +1062,12 @@ class ProcessMgr():
             aligned_img, M = align_crop(frame, target_face.kps, subsample_size)
 
         fake_frame = aligned_img
+        if self.options.show_face_masking:
+            # Mask view (Face Swap tab): no swap processor runs; the "swapped face"
+            # is the crop tinted green, so after the occlusion mask, the paste
+            # matte (erosion, blur, offsets) and the kept mouth / eyes, the frame
+            # is tinted exactly where a swap would replace it.
+            fake_frame = cv2.addWeighted(aligned_img, 0.45, np.full_like(aligned_img, (0, 255, 0)), 0.55, 0)
         target_face.matrix = M
 
         import time as _pt
@@ -1218,7 +1285,7 @@ class ProcessMgr():
 
         # Optional Reinhard LAB color transfer toward the target, restricted to
         # the face region so background lighting does not skew the statistics.
-        if roop.globals.use_color_transfer:
+        if roop.globals.use_color_transfer and not self.options.show_face_masking:
             paste_face = self._match_color_masked(paste_face, target_area, img_matte)
 
         # Re-assemble image (outside the paste area the matte is zero, so the
@@ -1503,11 +1570,6 @@ class ProcessMgr():
         # when the occlusion mask runs after the enhancer.
         if frame.shape[:2] != target.shape[:2]:
             frame = cv2.resize(frame, (target.shape[1], target.shape[0]))
-
-        if self.options.show_face_masking:
-            result = (1 - img_mask) * frame.astype(np.float32)
-            return np.uint8(result)
-
 
         target = target.astype(np.float32)
         result = (1-img_mask) * target

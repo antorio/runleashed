@@ -102,10 +102,11 @@ def run():
             with gr.Row(variant='compact', elem_id="app_header"):
                 gr.Markdown(f"# [{roop.metadata.name} {roop.metadata.version}](https://github.com/antorio/runleashed)")
                 gr.HTML(util.create_version_html(), elem_id="versions")
-            faceswap_tab()
+            faceswap_load = faceswap_tab()
             facemgr_tab()
             settings_tab()
             gr.HTML('<div class="rl-footer">Use via API</div>')
+            faceswap_load(ui)
         launch_browser = roop.globals.CFG.launch_browser
 
         uii.ui_restart_server = False

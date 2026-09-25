@@ -17,6 +17,7 @@ except ImportError:
     torch = None
 import onnxruntime
 import pathlib
+import threading
 import argparse
 
 from time import time
@@ -252,38 +253,91 @@ def get_processing_plugins(masking_engine):
     return processors
 
 
+# One ProcessMgr serves the preview and the render. The lock keeps a preview
+# from being re-initialised halfway through a frame, and a render from starting
+# under a preview; render_active keeps any preview (and the settings it would
+# apply) away from a running render, whose per-frame globals and ProcessMgr
+# state (frame sequencer, stabiliser, tracks) must not change.
+_swap_lock = threading.RLock()
+render_active = False
+mask_view_mgr = None
+# Stop pressed before batch_process starts (the render still waits for a
+# preview or loads its models): batch_process sets processing = True, which
+# used to wipe that Stop out. Set by the UI's Stop, cleared at its Start.
+stop_requested = False
+
+
+def preview_locked(work):
+    """Run work() for a preview unless a render is running (or starting).
+    Returns (ran, result); never waits for a render."""
+    if not _swap_lock.acquire(blocking=False):
+        return False, None
+    try:
+        if render_active:
+            return False, None
+        return True, work()
+    finally:
+        _swap_lock.release()
+
+
 def live_swap(frame, options):
     global process_mgr
 
     if frame is None:
         return frame
 
-    if process_mgr is None:
-        process_mgr = ProcessMgr(None)
-    
-#    if len(roop.globals.INPUT_FACESETS) <= selected_index:
-#        selected_index = 0
-    process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
-    newframe = process_mgr.process_frame(frame)
+    with _swap_lock:
+        if process_mgr is None:
+            process_mgr = ProcessMgr(None)
+        process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
+        newframe = process_mgr.process_frame(frame)
     if newframe is None:
         return frame
     return newframe
 
 
+def mask_view(frame, options):
+    """The frame with the area the swap replaces tinted green and occluders
+    (kept original) cut out of it, no swap. Its own ProcessMgr, so the main
+    one keeps its restorer / enhancer loaded."""
+    global mask_view_mgr
+    if frame is None:
+        return frame
+    with _swap_lock:
+        if mask_view_mgr is None:
+            mask_view_mgr = ProcessMgr(None)
+        mask_view_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options, release_idle=False)
+        newframe = mask_view_mgr.process_frame(frame)
+    return frame if newframe is None else newframe
+
+
 def batch_process_regular(swap_model, output_method, files:list[ProcessEntry], masking_engine:str, new_clip_text:str, use_new_method, imagemask, restore_original_mouth, restore_original_eyes, num_swap_steps, progress, selected_index = 0) -> None:
+    global clip_text, process_mgr, render_active
+
+    with _swap_lock:            # waits for a preview that is still running
+        render_active = True
+    try:
+        _batch_process_regular(swap_model, output_method, files, masking_engine, new_clip_text, use_new_method, imagemask,
+                               restore_original_mouth, restore_original_eyes, num_swap_steps, progress, selected_index)
+    finally:
+        render_active = False
+
+
+def _batch_process_regular(swap_model, output_method, files, masking_engine, new_clip_text, use_new_method, imagemask, restore_original_mouth, restore_original_eyes, num_swap_steps, progress, selected_index):
     global clip_text, process_mgr
 
-    release_resources(keep_models=True)
-    limit_resources()
-    if process_mgr is None:
-        process_mgr = ProcessMgr(progress)
-    mask = imagemask["layers"][0] if imagemask is not None else None
-    if len(roop.globals.INPUT_FACESETS) <= selected_index:
-        selected_index = 0
-    options = ProcessOptions(swap_model, get_processing_plugins(masking_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
-                              roop.globals.face_swap_mode, selected_index, new_clip_text, mask, num_swap_steps,
-                              roop.globals.subsample_size, False, restore_original_mouth, restore_original_eyes=restore_original_eyes)
-    process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
+    with _swap_lock:
+        release_resources(keep_models=True)
+        limit_resources()
+        if process_mgr is None:
+            process_mgr = ProcessMgr(progress)
+        mask = imagemask["layers"][0] if isinstance(imagemask, dict) else imagemask
+        if len(roop.globals.INPUT_FACESETS) <= selected_index:
+            selected_index = 0
+        options = ProcessOptions(swap_model, get_processing_plugins(masking_engine), roop.globals.distance_threshold, roop.globals.blend_ratio,
+                                  roop.globals.face_swap_mode, selected_index, new_clip_text, mask, num_swap_steps,
+                                  roop.globals.subsample_size, False, restore_original_mouth, restore_original_eyes=restore_original_eyes)
+        process_mgr.initialize(roop.globals.INPUT_FACESETS, roop.globals.TARGET_FACES, options)
     batch_process(output_method, files, use_new_method)
     return
 
@@ -291,6 +345,16 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
     global clip_text, process_mgr
 
     roop.globals.processing = True
+    if stop_requested:
+        roop.globals.processing = False
+        end_processing('Processing stopped!')
+        return
+    run_started = time()
+
+    def fresh(path):
+        # written by this run (a file of an earlier run with the same name,
+        # e.g. an output template without {time}, does not count)
+        return bool(path) and os.path.isfile(path) and os.path.getmtime(path) >= run_started - 1
 
     # limit threads for some providers
     max_threads = suggest_execution_threads()
@@ -302,34 +366,56 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
            
     update_status('Sorting videos/images')
 
+    used = set()
+    def unique(path, marker=''):
+        # two targets with the same file name (other folders, or the same second
+        # in {time}) would write one output: only then add _2, _3, ...
+        if path not in used:
+            used.add(path)
+            return path
+        stem, ext = os.path.splitext(path)
+        if marker and stem.endswith(marker):
+            stem = stem[:-len(marker)]
+        n = 2
+        while f'{stem}_{n}{marker}{ext}' in used:
+            n += 1
+        path = f'{stem}_{n}{marker}{ext}'
+        used.add(path)
+        return path
 
     for index, f in enumerate(files):
         fullname = f.filename
         if util.has_image_extension(fullname):
             destination = util.get_destfilename_from_path(fullname, roop.globals.output_path, f'.{roop.globals.CFG.output_image_format}')
-            destination = util.replace_template(destination, index=index)
+            destination = unique(util.replace_template(destination, index=index))
             pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
             f.finalname = destination
             imagefiles.append(f)
 
         elif util.is_video(fullname) or util.has_extension(fullname, ['gif']):
             destination = util.get_destfilename_from_path(fullname, roop.globals.output_path, f'__temp.{roop.globals.CFG.output_video_format}')
-            f.finalname = destination
+            f.finalname = unique(destination, '__temp')
             videofiles.append(f)
 
 
 
     if(len(imagefiles) > 0):
         update_status('Processing image(s)')
-        origimages = []
-        fakeimages = []
+        # a painted keep-original mask belongs to the file it was painted on
+        plain = [f for f in imagefiles if getattr(f, 'imagemask', None) is None]
+        masked = [f for f in imagefiles if getattr(f, 'imagemask', None) is not None]
+        if plain:
+            process_mgr.set_manual_mask(None)
+            process_mgr.run_batch([f.filename for f in plain], [f.finalname for f in plain], roop.globals.execution_threads)
+        for f in masked:
+            if not roop.globals.processing:
+                break
+            process_mgr.set_manual_mask(f.imagemask)
+            process_mgr.run_batch([f.filename], [f.finalname], roop.globals.execution_threads)
+        process_mgr.set_manual_mask(None)
         for f in imagefiles:
-            origimages.append(f.filename)
-            fakeimages.append(f.finalname)
-
-        process_mgr.run_batch(origimages, fakeimages, roop.globals.execution_threads)
-        origimages.clear()
-        fakeimages.clear()
+            # "Drop the frame" writes no file for an image
+            f.completed = fresh(f.finalname)
 
     if(len(videofiles) > 0):
         for index,v in enumerate(videofiles):
@@ -345,6 +431,8 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                 update_status(f'Creating {os.path.basename(v.finalname)} with {fps} FPS...')
 
             start_processing = time()
+            if hasattr(v, 'imagemask'):
+                process_mgr.set_manual_mask(v.imagemask)
             if is_streaming_only == False and roop.globals.keep_frames or not use_new_method:
                 util.create_temp(v.filename)
                 update_status('Extracting frames...')
@@ -383,7 +471,9 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
             if os.path.isfile(video_file_name):
                 destination = ''
                 if util.has_extension(v.filename, ['gif']):
-                    gifname = util.get_destfilename_from_path(v.filename, roop.globals.output_path, '.gif')
+                    # from finalname, which carries the _2 of a clashing name
+                    # (replace_template drops its __temp); same name otherwise
+                    gifname = os.path.splitext(v.finalname)[0] + '.gif'
                     destination = util.replace_template(gifname, index=index)
                     pathlib.Path(os.path.dirname(destination)).mkdir(parents=True, exist_ok=True)
 
@@ -402,6 +492,11 @@ def batch_process(output_method, files:list[ProcessEntry], use_new_method) -> No
                             os.remove(video_file_name)
                     else:
                         shutil.move(video_file_name, destination)
+                # the finished file (finalname was the intermediate __temp file,
+                # which is gone now): this is what the UI shows as the result
+                if destination and fresh(destination):
+                    v.finalname = destination
+                    v.completed = True
 
             elif is_streaming_only == False:
                 update_status(f'Failed processing {os.path.basename(v.finalname)}!')

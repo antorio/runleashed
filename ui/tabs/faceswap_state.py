@@ -1,0 +1,1043 @@
+"""Face Swap tab: state and logic, no layout (ui/tabs/faceswap_tab.py builds
+the page and wires it to these functions).
+
+State lives on the server, module-level (one user at a time, like the rest of
+the app): the sources (roop.globals.INPUT_FACESETS + thumbnails + captions +
+which one is active), the target files (with their frame range, output frame
+rate and painted mask), the people to replace (roop.globals.TARGET_FACES), and
+the settings last applied from the panel.
+
+Settings are applied from the panel at every preview refresh and once at Start
+(apply_settings), inside the engine's lock and never while a render runs, so a
+render keeps the settings it started with. The panel is refilled from `values`
+on page load, so a reload shows the real state.
+"""
+import json
+import os
+import random
+import shutil
+import tempfile
+import threading
+
+import cv2
+import numpy as np
+
+import roop.globals
+import roop.utilities as util
+import ui.globals
+from roop.FaceSet import FaceSet
+from roop.ProcessEntry import ProcessEntry
+from roop.ProcessOptions import ProcessOptions
+
+G = roop.globals
+SWAP_MODEL = "InSwapper 128"        # the only model; ProcessOptions reads the output size (128) from it
+
+# ----------------------------------------------------------------------------- choices
+
+MODES = {                           # label -> ProcessMgr swap mode
+    'Largest face': 'first',
+    'All faces': 'all',
+    'Specific people': 'selected',
+    'All women': 'all_female',
+    'All men': 'all_male',
+    'One source per face (left to right)': 'all_input',
+}
+MODE_INFO = {
+    'Largest face': 'The biggest face in each frame gets the active source.',
+    'All faces': 'Every detected face gets the active source, background faces too.',
+    'Specific people': 'Only the people you pick in the preview get the active source.',
+    'All women': 'Every face the detector reads as female gets the active source.',
+    'All men': 'Every face the detector reads as male gets the active source.',
+    'One source per face (left to right)': 'Counted from the left in each frame: 1st face ← 1st source, 2nd ← 2nd, ... '
+                                           'When people cross, their sources swap too.',
+}
+NO_FACE = {                         # label -> roop.globals.no_face_action
+    'Keep the original frame': 0,
+    'Try rotated, else keep the original': 1,
+    'Drop the frame': 2,
+}
+MASK_ENGINES = {
+    'None': None,
+    'DFL XSeg': 'mask_xseg',
+    'FF XSeg 1': 'mask_ffxseg1',
+    'FF XSeg 2': 'mask_ffxseg2',
+    'FF XSeg 3': 'mask_ffxseg3',
+    'FF XSeg (combined)': 'mask_ffxseg_many',
+    'Face Parser (BiSeNet)': 'mask_faceparser',
+    'Clip2Seg (by text)': 'mask_clip2seg',
+}
+ENHANCERS = {'None': 'None', 'GFPGAN': 'GFPGAN', 'CodeFormer': 'Codeformer', 'RestoreFormer++': 'Restoreformer++'}
+RESOLUTIONS = ['128px', '256px', '512px', '768px', '1024px']
+METHOD_MEMORY, METHOD_EXTRACT = 'In memory (recommended)', 'Extract frames to disk'
+MULTI_ANGLE = {'Off': 'off', 'Only when no upright face is found': 'fallback', 'Always (slower)': 'always'}
+VIEWS = ['Original', 'Swapped', 'Side by side', 'Mask', 'Result']
+
+# accepted exactly as the render accepts them (roop.core.batch_process)
+def is_target_file(path):
+    return util.has_image_extension(path) or util.is_video(path) or util.has_extension(path, ['gif'])
+
+
+def is_source_file(path):
+    return path.lower().endswith('.fsz') or util.has_image_extension(path)
+
+
+# ----------------------------------------------------------------------------- settings
+
+# key -> initial value: the old panel's defaults (the engine globals for the
+# settings that were bound to one), so the default output is unchanged
+FACTORY = {
+    # faces to replace
+    'mode': 'Largest face', 'tolerance': G.distance_threshold,
+    # swap
+    'resolution': '256px', 'passes': 1, 'identity': G.identity_strength, 'face_shape': G.face_shape_strength,
+    # expression
+    'er': G.expression_restorer, 'er_strength': G.expression_restorer_factor,
+    'er_eyes': G.expression_restore_eyes, 'er_mouth': G.expression_restore_mouth, 'er_brows': G.expression_restore_brows,
+    'er_smoothing': G.expression_smoothing_strength, 'er_pose_lock': G.expression_pose_lock,
+    'er_pose_gate': G.expression_pose_gate, 'er_structure': G.expression_keep_structure,
+    'keep_mouth': False, 'keep_eyes': False,
+    # occlusion, edges & blending
+    'mask_engine': 'DFL XSeg', 'mask_objects': 'cup,hands,hair,banana',
+    'erosion': G.mask_erosion_iterations, 'blur': G.mask_blur_size, 'to_chin': G.mask_bottom_to_chin,
+    'aligned_edges': G.mask_face_aligned, 'color_transfer': G.use_color_transfer,
+    'crop_top': 0.0, 'crop_bottom': 0.0, 'crop_left': 0.0, 'crop_right': 0.0,
+    # enhance
+    'enhancer': 'None', 'enhancer_blend': 0.65, 'mask_after_enhancer': G.mask_after_enhancer,
+    # detection & tracking
+    'det_thresh': G.det_thresh, 'det_size': G.det_size,
+    'multi_angle': next(k for k, v in MULTI_ANGLE.items() if v == G.multi_angle_detection_mode),
+    'upright': G.angle0_bonus, 'autorotate': True,
+    'lmk_align': G.use_landmark_alignment, 'hi_lmk': G.use_hi_landmarker,
+    'lmk_gate': G.landmark_sanity_gate, 'lmk_gate_thr': G.landmark_sanity_threshold,
+    'smoothing': G.landmark_smoothing, 'smoothing_strength': G.landmark_smoothing_strength,
+    'smoothing_deadzone': G.landmark_smoothing_deadzone,
+    # video output
+    'method': METHOD_MEMORY, 'keep_frames': False, 'no_face': 'Try rotated, else keep the original',
+    'skip_audio': False,
+}
+values = dict(FACTORY)
+SETTING_KEYS = list(FACTORY)
+_SETTINGS_FILE = 'runleashed_faceswap_settings.json'
+
+
+def _settings_path():
+    return os.path.join(G.output_path or '.', _SETTINGS_FILE)
+
+
+def load_saved_defaults():
+    """The user's saved defaults (in the output folder, so they survive a new
+    Colab session), if any. Unknown or invalid entries are ignored."""
+    try:
+        with open(_settings_path(), encoding='utf-8') as fh:
+            saved = json.load(fh)
+    except Exception:
+        return False
+    choices = {'mode': MODES, 'no_face': NO_FACE, 'mask_engine': MASK_ENGINES, 'enhancer': ENHANCERS,
+               'resolution': RESOLUTIONS, 'method': (METHOD_MEMORY, METHOD_EXTRACT), 'multi_angle': MULTI_ANGLE,
+               'det_size': (320, 640, 1024)}
+    for k, v in saved.items():
+        if k not in FACTORY:
+            continue
+        d = FACTORY[k]
+        if isinstance(d, bool):
+            ok = isinstance(v, bool)
+        elif isinstance(d, (int, float)):
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+        else:
+            ok = isinstance(v, str)
+        if ok and k in choices:
+            ok = v in choices[k]
+        if ok:
+            values[k] = v
+    return True
+
+
+def save_defaults():
+    with open(_settings_path(), 'w', encoding='utf-8') as fh:
+        json.dump({k: values[k] for k in SETTING_KEYS}, fh, indent=1)
+    return _settings_path()
+
+
+def has_saved_defaults():
+    return os.path.isfile(_settings_path())
+
+
+def load_my_defaults():
+    """The saved defaults (on top of the factory ones, for keys the file does
+    not have). False when there is no saved file."""
+    if not has_saved_defaults():
+        return False
+    values.update(FACTORY)
+    return load_saved_defaults()
+
+
+def factory_defaults():
+    """The panel back to the factory values. The saved defaults file stays
+    (it loads at the next start); Save replaces it."""
+    values.update(FACTORY)
+
+
+def apply_settings(settings=None):
+    """Store the panel's values and write them to the engine: globals, and the
+    crop offsets onto every source. Call inside the engine lock, never while a
+    render runs (roop.core.preview_locked / at Start)."""
+    if settings:
+        values.update({k: v for k, v in settings.items() if k in FACTORY})
+    v = values
+    G.face_swap_mode = MODES[v['mode']]
+    G.distance_threshold = float(v['tolerance'])
+    G.subsample_size = int(str(v['resolution']).lower().replace('px', '').strip())
+    G.identity_strength = float(v['identity'])
+    G.face_shape_strength = float(v['face_shape'])
+    G.expression_restorer = bool(v['er'])
+    G.expression_restorer_factor = float(v['er_strength'])
+    G.expression_restore_eyes = bool(v['er_eyes'])
+    G.expression_restore_mouth = bool(v['er_mouth'])
+    G.expression_restore_brows = bool(v['er_brows'])
+    G.expression_smoothing_strength = float(v['er_smoothing'])
+    G.expression_pose_lock = bool(v['er_pose_lock'])
+    G.expression_pose_gate = bool(v['er_pose_gate'])
+    G.expression_keep_structure = bool(v['er_structure'])
+    G.mask_erosion_iterations = int(v['erosion'])
+    G.mask_blur_size = int(v['blur'])
+    G.mask_bottom_to_chin = bool(v['to_chin'])
+    G.mask_face_aligned = bool(v['aligned_edges'])
+    G.use_color_transfer = bool(v['color_transfer'])
+    G.selected_enhancer = ENHANCERS[v['enhancer']]
+    G.blend_ratio = float(v['enhancer_blend'])
+    G.mask_after_enhancer = bool(v['mask_after_enhancer'])
+    G.det_thresh = float(v['det_thresh'])
+    G.det_size = int(v['det_size'])
+    G.multi_angle_detection_mode = MULTI_ANGLE[v['multi_angle']]
+    G.angle0_bonus = float(v['upright'])
+    G.autorotate_faces = bool(v['autorotate'])
+    G.use_landmark_alignment = bool(v['lmk_align'])
+    G.use_hi_landmarker = bool(v['hi_lmk'])
+    G.landmark_sanity_gate = bool(v['lmk_gate'])
+    G.landmark_sanity_threshold = float(v['lmk_gate_thr'])
+    G.landmark_smoothing = bool(v['smoothing'])
+    G.landmark_smoothing_strength = float(v['smoothing_strength'])
+    G.landmark_smoothing_deadzone = float(v['smoothing_deadzone'])
+    G.no_face_action = NO_FACE[v['no_face']]
+    G.skip_audio = bool(v['skip_audio'])
+    G.keep_frames = bool(v['keep_frames']) and v['method'] == METHOD_EXTRACT
+    G.vr_mode = False
+    G.wait_after_extraction = False
+    G.execution_threads = int(round(float(G.CFG.max_threads)))
+    # crop offsets: the same for every source (top + bottom and left + right < 1)
+    top = min(float(v['crop_top']), 0.99)
+    bottom = min(float(v['crop_bottom']), 0.99 - top)
+    left = min(float(v['crop_left']), 0.99)
+    right = min(float(v['crop_right']), 0.99 - left)
+    for face_set in G.INPUT_FACESETS:
+        for face in face_set.faces:
+            mo = list(getattr(face, 'mask_offsets', None) or (0, 0, 0, 0, 1, 20))
+            face.mask_offsets = (top, bottom, left, right, mo[4], mo[5])
+
+
+def mask_plugin():
+    """(plugin name or None, warning or None) for the chosen occlusion mask."""
+    plugin = MASK_ENGINES.get(values['mask_engine'])
+    if plugin == 'mask_clip2seg':
+        if not (values['mask_objects'] or '').strip():
+            return None, 'Clip2Seg: type the objects to keep (e.g. hands, hair). No mask is used now.'
+        import importlib.util
+        if importlib.util.find_spec('torch') is None:
+            return None, 'Clip2Seg needs PyTorch, which is not installed here. No mask is used now.'
+    return plugin, None
+
+
+def build_options(mask_view=False):
+    """ProcessOptions for the preview from the applied settings, with the
+    shown file's painted mask (the render sets it per file itself). mask_view:
+    the Mask view, no swap, every face, tinted green where a swap would
+    replace the frame (occlusion mask, paste edges, kept mouth / eyes and
+    painted areas stay untinted)."""
+    from roop.core import get_processing_plugins
+    plugin, _ = mask_plugin()
+    t = target()
+    painted = t['mask'] if t is not None else None
+    keep_mouth, keep_eyes = bool(values['keep_mouth']), bool(values['keep_eyes'])
+    if mask_view:
+        processors = {plugin: {}} if plugin else {}
+        return ProcessOptions(SWAP_MODEL, processors, G.distance_threshold, G.blend_ratio, 'all', 0,
+                              values['mask_objects'], painted, 0, G.subsample_size, False, keep_mouth,
+                              True, restore_original_eyes=keep_eyes)
+    return ProcessOptions(SWAP_MODEL, get_processing_plugins(plugin), G.distance_threshold, G.blend_ratio,
+                          G.face_swap_mode, active_source_index(), values['mask_objects'], painted,
+                          int(values['passes']), G.subsample_size, False, keep_mouth,
+                          restore_original_eyes=keep_eyes)
+
+
+def summary(section):
+    """A few words for a settings section's header."""
+    v = values
+    if section == 'swap':
+        parts = [v['resolution']]
+        if int(v['passes']) > 1:
+            parts.append(f"{int(v['passes'])} passes")
+        if float(v['identity']) > 0:
+            parts.append(f"identity {float(v['identity']):.2f}")
+        if float(v['face_shape']) > 0:
+            parts.append(f"face shape {float(v['face_shape']):.2f}")
+        return ' · '.join(parts)
+    if section == 'expression':
+        parts = [f"on · {float(v['er_strength']):.0f}" if v['er'] else 'off']
+        if v['keep_mouth'] or v['keep_eyes']:
+            parts.append('target ' + ' + '.join(k for k, on in (('mouth', v['keep_mouth']), ('eyes', v['keep_eyes'])) if on))
+        return ' · '.join(parts)
+    if section == 'occlusion':
+        parts = [v['mask_engine']]
+        if any(t.get('mask') is not None for t in targets):
+            parts.append('painted mask')
+        return ' · '.join(parts)
+    if section == 'enhance':
+        return 'none' if v['enhancer'] == 'None' else f"{v['enhancer']} · {float(v['enhancer_blend']):.2f}"
+    if section == 'detection':
+        return f"{float(v['det_thresh']):.2f} · {v['det_size']} · " + ('68-pt' if v['lmk_align'] else '5-pt')
+    if section == 'video':
+        return ('in memory' if v['method'] == METHOD_MEMORY else 'extract frames') + ' · ' + {
+            0: 'keep original', 1: 'try rotated', 2: 'drop frame'}[NO_FACE[v['no_face']]]
+    return ''
+
+
+# ----------------------------------------------------------------------------- sources
+
+source_captions = []                 # parallel to roop.globals.INPUT_FACESETS / ui.globals.ui_input_thumbs
+active_source = 0
+_source_undo = []                     # (label, [(position, faceset, thumb, caption)], faceset added or None, source in use)
+
+
+def active_source_index():
+    n = len(G.INPUT_FACESETS)
+    return active_source if 0 <= active_source < n else 0
+
+
+def _sync_sources():
+    """Keep the captions aligned when something else changed the sources
+    (Settings > Clean temp folder clears them)."""
+    global active_source
+    n = len(G.INPUT_FACESETS)
+    del ui.globals.ui_input_thumbs[n:]
+    del source_captions[n:]
+    while len(ui.globals.ui_input_thumbs) < n:          # added without a thumbnail
+        ui.globals.ui_input_thumbs.append(np.full((112, 112, 3), 128, np.uint8))
+    while len(source_captions) < n:
+        source_captions.append(f'source {len(source_captions) + 1}')
+    if active_source >= n:
+        active_source = max(0, n - 1)
+
+
+def sources_gallery():
+    _sync_sources()
+    numbered = MODES[values['mode']] == 'all_input'
+    return [(thumb, f'{i + 1} · {cap}' if numbered else cap)
+            for i, (thumb, cap) in enumerate(zip(ui.globals.ui_input_thumbs, source_captions))]
+
+
+def source_info():
+    _sync_sources()
+    n = len(G.INPUT_FACESETS)
+    if n == 0:
+        return 'No source yet: drop photos of the face to use, or a faceset (.fsz).'
+    if MODES[values['mode']] == 'all_input':
+        return f'{n} source{"s" if n != 1 else ""}, used left to right in the numbered order.'
+    text = f'**In use:** {source_captions[active_source_index()]}'
+    if n > 1:
+        text += f' · {n} sources (click one to use it)'
+    more = len(same_person_photos()) - 1
+    if more > 0:
+        text += (f'\n\n{more} more photo{"s" if more != 1 else ""} of this person. *Combine photos of this person* '
+                 'makes them one faceset (one identity); kept separate, only the source in use counts.')
+    return text
+
+
+def same_person_photos():
+    """Indexes of the photo sources of the person in use (the one in use
+    included), or [] when the source in use is a faceset. Same person: the
+    faceset check's "other person?" threshold (roop/faceset_check.py)."""
+    _sync_sources()
+    if not G.INPUT_FACESETS:
+        return []
+    a = active_source_index()
+    if not getattr(G.INPUT_FACESETS[a], 'from_photo', False):
+        return []
+    ref = _unit_embedding(G.INPUT_FACESETS[a])
+    return [i for i, s in enumerate(G.INPUT_FACESETS)
+            if getattr(s, 'from_photo', False) and float(_unit_embedding(s) @ ref) >= 0.40]
+
+
+def add_sources(paths, progress=None):
+    """Load photos (every face becomes a source) and .fsz facesets (one source
+    each). Returns a list of per-file messages."""
+    global active_source
+    from roop.face_util import extract_face_images
+    from roop.capturer import get_image_frame
+    _sync_sources()
+    first_new = len(G.INPUT_FACESETS)
+    messages = []
+    for k, path in enumerate(paths):
+        if progress is not None:
+            progress(k / max(len(paths), 1), desc='Loading source faces')
+        name = os.path.basename(path)
+        if path.lower().endswith('.fsz'):
+            face_set, caption, msg = _load_faceset(path)
+            if face_set is None:
+                messages.append(msg)
+                continue
+            G.INPUT_FACESETS.append(face_set)
+            ui.globals.ui_input_thumbs.append(face_set.thumb)
+            source_captions.append(caption)
+            messages.append(msg or f'{name}: faceset added ({caption.split(" · ")[-1]})')
+        elif util.has_image_extension(path):
+            found = extract_face_images(path, (False, 0))
+            if not found:
+                messages.append(f'{name}: no face found, not added')
+                continue
+            image = get_image_frame(path)
+            for i, (face, crop) in enumerate(found):
+                face.mask_offsets = (0, 0, 0, 0, 1, 20)
+                face_set = FaceSet()
+                face_set.faces.append(face)
+                face_set.ref_images.append(image)
+                face_set.from_photo = True
+                G.INPUT_FACESETS.append(face_set)
+                ui.globals.ui_input_thumbs.append(util.convert_to_gradio(crop))
+                source_captions.append(name if len(found) == 1 else f'{name} · face {i + 1}')
+            messages.append(f'{name}: 1 face added' if len(found) == 1 else
+                            f'{name}: {len(found)} faces added as {len(found)} sources')
+        else:
+            messages.append(f'{name}: not a photo or faceset, skipped')
+    if len(G.INPUT_FACESETS) > first_new:
+        active_source = first_new          # the newest source is the one in use
+    return messages
+
+
+def add_source_path(path):
+    """A .fsz / photo file, or a folder of them (not recursive)."""
+    path = (path or '').strip()
+    if not path:
+        return ['Type the path of a faceset, a photo or a folder']
+    if os.path.isfile(path):
+        return add_sources([path]) if is_source_file(path) else [f'Not a photo or faceset: {path}']
+    if os.path.isdir(path):
+        files = sorted(p for p in (os.path.join(path, f) for f in os.listdir(path) if not f.startswith('.'))
+                       if os.path.isfile(p) and is_source_file(p))
+        return add_sources(files) if files else [f'No photos or facesets in {path}']
+    return [f'Not found: {path}']
+
+
+def _load_faceset(path):
+    """One FaceSet from a .fsz (all faces of all its PNGs, averaged), its
+    caption, and a message (faceset check or error)."""
+    from roop.face_util import extract_face_images
+    from roop.capturer import get_image_frame
+    name = os.path.basename(path)
+    folder = tempfile.mkdtemp(prefix='faceset_')
+    try:
+        util.unzip(path, folder)
+        face_set = FaceSet()
+        main_faces = []
+        thumb = None
+        # os.listdir order, as before: faces[0] holds the averaged identity, and
+        # summing in another order could change it in the last float bits
+        for file in os.listdir(folder):
+            if not file.endswith('.png'):
+                continue
+            filename = os.path.join(folder, file)
+            found = extract_face_images(filename, (False, 0))
+            if found:
+                areas = [(f[0].bbox[2] - f[0].bbox[0]) * (f[0].bbox[3] - f[0].bbox[1]) for f in found]
+                main_faces.append(len(face_set.faces) + int(np.argmax(areas)))
+            for face, crop in found:
+                face.mask_offsets = (0, 0, 0, 0, 1, 20)
+                face_set.faces.append(face)
+                if thumb is None:
+                    thumb = util.convert_to_gradio(crop)
+                face_set.ref_images.append(get_image_frame(filename))
+        if not face_set.faces:
+            return None, None, f'{name}: no face found in the faceset'
+        msg = None
+        flagged = 0
+        if len(main_faces) > 2:
+            try:
+                from roop import faceset_check
+                refs = face_set.ref_images
+                rows = faceset_check.check([faceset_check.photo_metrics(face_set.faces[i], refs[i], geometry=False)
+                                            for i in main_faces])
+                text = faceset_check.summary(rows, shape=False)
+                print(f'[faceset] {name}: {text}')
+                flagged = sum(1 for r in rows if r['removable'])
+                if flagged:
+                    msg = f'{name}: {text}. Review it in the Face Management tab.'
+            except Exception as e:
+                print(f'[faceset] check skipped ({e})')
+        if len(face_set.faces) > 1:
+            face_set.AverageEmbeddings()
+        face_set.thumb = thumb
+        caption = f'{name} · {len(main_faces)} photos' + (f' · {flagged} flagged' if flagged else '')
+        return face_set, caption, msg
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def select_source(index):
+    global active_source
+    if 0 <= index < len(G.INPUT_FACESETS):
+        active_source = index
+
+
+def _take_sources(indexes):
+    """Remove these sources; their records (ascending position) for Undo."""
+    records = []
+    for i in sorted(set(indexes), reverse=True):
+        records.append((i, G.INPUT_FACESETS.pop(i), ui.globals.ui_input_thumbs.pop(i), source_captions.pop(i)))
+    return records[::-1]
+
+
+def remove_active_source():
+    global active_source
+    _sync_sources()
+    if not G.INPUT_FACESETS:
+        return False
+    i = active_source_index()
+    in_use = G.INPUT_FACESETS[i]
+    _source_undo.append(('remove source', _take_sources([i]), None, in_use))
+    active_source = min(i, len(G.INPUT_FACESETS) - 1) if G.INPUT_FACESETS else 0
+    return True
+
+
+def clear_sources():
+    global active_source
+    _sync_sources()
+    if not G.INPUT_FACESETS:
+        return False
+    in_use = G.INPUT_FACESETS[active_source_index()]
+    _source_undo.append(('remove all sources', _take_sources(range(len(G.INPUT_FACESETS))), None, in_use))
+    active_source = 0
+    return True
+
+
+def undo_sources():
+    """Undo the last remove / combine. Returns its label or None."""
+    global active_source
+    _sync_sources()
+    if not _source_undo:
+        return None
+    label, records, added, in_use = _source_undo.pop()
+    if added is not None:
+        k = next((i for i, s in enumerate(G.INPUT_FACESETS) if s is added), None)
+        if k is not None:
+            _take_sources([k])
+    for position, face_set, thumb, caption in records:
+        if any(s is face_set for s in G.INPUT_FACESETS):
+            continue
+        position = min(position, len(G.INPUT_FACESETS))
+        G.INPUT_FACESETS.insert(position, face_set)
+        ui.globals.ui_input_thumbs.insert(position, thumb)
+        source_captions.insert(position, caption)
+    active_source = next((i for i, s in enumerate(G.INPUT_FACESETS) if s is in_use), 0)
+    return label
+
+
+def source_undo_label():
+    return f'Undo {_source_undo[-1][0]}' if _source_undo else None
+
+
+def _copy_face(face):
+    """A separate insightface Face with the same values (copy.copy fails on it:
+    its __getattr__ answers None for __setstate__)."""
+    c = face.__class__()
+    dict.update(c, face)
+    c.__dict__.update(face.__dict__)
+    return c
+
+
+def _unit_embedding(face_set):
+    e = np.asarray(face_set.faces[0].embedding, dtype=np.float32)
+    return e / max(float(np.linalg.norm(e)), 1e-6)
+
+
+def combine_photo_sources():
+    """Blend the photo sources of the person in use into one faceset (like a
+    .fsz: one identity averaged over the photos). Faces of other people (a
+    group photo) and loaded .fsz facesets stay as they are. Undoable."""
+    global active_source
+    same = same_person_photos()
+    if len(same) < 2:
+        return 'No other photo of the person in use: nothing to combine'
+    a = active_source_index()
+    photos = [i for i, s in enumerate(G.INPUT_FACESETS) if getattr(s, 'from_photo', False)]
+    combined = FaceSet()
+    for i in same:
+        # copies: AverageEmbeddings writes the average into faces[0], which
+        # must not change the photo's own source (Undo brings it back)
+        combined.faces.extend(_copy_face(f) for f in G.INPUT_FACESETS[i].faces)
+        combined.ref_images.extend(G.INPUT_FACESETS[i].ref_images)
+    combined.AverageEmbeddings()
+    thumb = ui.globals.ui_input_thumbs[a]
+    position = same[0]
+    in_use = G.INPUT_FACESETS[a]
+    _source_undo.append(('combine', _take_sources(same), combined, in_use))
+    G.INPUT_FACESETS.insert(position, combined)
+    ui.globals.ui_input_thumbs.insert(position, thumb)
+    source_captions.insert(position, f'{len(same)} photos combined')
+    active_source = position
+    others = len(photos) - len(same)
+    return (f'{len(same)} photos of the person in use combined into one faceset'
+            + (f'; {others} face{"s" if others != 1 else ""} of other people left as {"they are" if others != 1 else "it is"}'
+               if others else ''))
+
+
+def shuffle_sources():
+    """Random order for 'One source per face' (drawn once, shown in the
+    numbered captions, used by preview and render alike)."""
+    global active_source
+    _sync_sources()
+    order = list(range(len(G.INPUT_FACESETS)))
+    random.shuffle(order)
+    G.INPUT_FACESETS[:] = [G.INPUT_FACESETS[i] for i in order]
+    ui.globals.ui_input_thumbs[:] = [ui.globals.ui_input_thumbs[i] for i in order]
+    source_captions[:] = [source_captions[i] for i in order]
+    active_source = order.index(active_source) if active_source < len(order) else 0
+
+
+# ----------------------------------------------------------------------------- targets
+
+targets = []                          # see add_targets
+selected_target = None
+_next_target = 0
+_removed_targets = []                 # (label, [(position, entry)]) for Undo
+
+
+def _thumb_dir():
+    folder = os.path.join(os.environ.get('TEMP') or tempfile.gettempdir(), 'faceswap_thumbs')
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _probe(path):
+    """(kind, frames, fps, first frame BGR) of a target file."""
+    if util.has_image_extension(path):
+        from roop.capturer import get_image_frame
+        return 'image', 1, 0.0, get_image_frame(path)
+    cap = cv2.VideoCapture(path)
+    try:
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        ok, frame = cap.read()
+    finally:
+        cap.release()
+    fps = float(util.detect_fps(path) or 0) if frames > 0 else 0.0
+    return ('gif' if path.lower().endswith('.gif') else 'video'), frames, fps, frame if ok else None
+
+
+def _write_thumb(t, frame):
+    if frame is None:
+        frame = np.zeros((90, 160, 3), np.uint8)
+    h, w = frame.shape[:2]
+    scale = 240.0 / max(h, w)
+    small = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+    os.makedirs(os.path.dirname(t['thumb']), exist_ok=True)       # Clean temp removes the folder
+    cv2.imwrite(t['thumb'], small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+
+def add_targets(paths, progress=None):
+    """Add target files (images, videos, GIFs); a path already in the list is
+    not added again. Returns per-file messages for files that were not added."""
+    global _next_target, selected_target
+    from roop.capturer import prepare_seek_copy
+    known = {t['path'] for t in targets}
+    messages = []
+    for k, path in enumerate(paths):
+        if progress is not None:
+            progress(k / max(len(paths), 1), desc='Adding target files')
+        name = os.path.basename(path)
+        if path in known:
+            continue
+        if not is_target_file(path):
+            messages.append(f'{name}: not an image, video or GIF, skipped')
+            continue
+        kind, frames, fps, first = _probe(path)
+        if kind != 'image' and frames < 1:
+            messages.append(f'{name}: its frames cannot be read, skipped')
+            continue
+        _next_target += 1
+        t = {'id': _next_target, 'path': path, 'name': name, 'kind': kind, 'frames': frames, 'fps': fps,
+             'start': 1, 'end': frames, 'out_fps': 0.0, 'mask': None, 'mask_frame': None,
+             'thumb': os.path.join(_thumb_dir(), f'{_next_target}.jpg')}
+        _write_thumb(t, first)
+        targets.append(t)
+        known.add(path)
+        if kind == 'video':
+            prepare_seek_copy(path)
+        if selected_target is None or target() is None:
+            selected_target = t['id']
+    return messages
+
+
+def add_target_path(path):
+    """A file, or every image / video in a folder (not recursive). A wrong
+    path changes nothing."""
+    path = (path or '').strip()
+    if not path:
+        return ['Type the path of a file or a folder']
+    if os.path.isfile(path):
+        return add_targets([path])
+    if os.path.isdir(path):
+        # full paths: util.is_video only accepts a file that exists
+        files = sorted(p for p in (os.path.join(path, f) for f in os.listdir(path) if not f.startswith('.'))
+                       if os.path.isfile(p) and is_target_file(p))
+        return add_targets(files) if files else [f'No images or videos in {path}']
+    return [f'Not found: {path}']
+
+
+def target(tid=None):
+    tid = selected_target if tid is None else tid
+    return next((t for t in targets if t['id'] == tid), None)
+
+
+def targets_gallery():
+    items = []
+    for t in targets:
+        if not os.path.isfile(t['thumb']):
+            _write_thumb(t, _probe(t['path'])[3] if os.path.isfile(t['path']) else None)
+        items.append((t['thumb'], _target_caption(t)))
+    return items
+
+
+def _target_caption(t):
+    parts = [t['name']]
+    if t['kind'] != 'image':
+        parts.append(timecode(t['frames'], t['fps'], short=True))
+        if (t['start'], t['end']) != (1, t['frames']):
+            parts.append(f"{t['start']}–{t['end']}")
+    if t['mask'] is not None:
+        parts.append('mask')
+    return ' · '.join(parts)
+
+
+def target_info():
+    t = target()
+    if not targets:
+        return 'No target yet: drop the images or videos to swap faces in.'
+    text = f"**Showing:** {t['name']}" if t else ''
+    if len(targets) > 1:
+        text += f' · {len(targets)} files, all rendered with the settings on the right'
+    return text
+
+
+def selected_target_index():
+    return next((i for i, t in enumerate(targets) if t['id'] == selected_target), None)
+
+
+def select_target(index):
+    global selected_target
+    if 0 <= index < len(targets):
+        selected_target = targets[index]['id']
+
+
+def remove_selected_target():
+    global selected_target
+    i = selected_target_index()
+    if i is None:
+        return False
+    _removed_targets.append(('remove file', [(i, targets.pop(i))]))
+    selected_target = targets[min(i, len(targets) - 1)]['id'] if targets else None
+    return True
+
+
+def clear_targets(undoable=True):
+    global selected_target
+    if targets and undoable:
+        _removed_targets.append(('remove all files', list(enumerate(targets))))
+    targets.clear()
+    selected_target = None
+
+
+def undo_targets():
+    """Bring back the files of the last removal. Returns its label or None."""
+    global selected_target
+    if not _removed_targets:
+        return None
+    label, removed = _removed_targets.pop()
+    for position, t in sorted(removed, key=lambda x: x[0]):
+        if all(o['path'] != t['path'] for o in targets):
+            targets.insert(min(position, len(targets)), t)
+    selected_target = removed[0][1]['id'] if target(removed[0][1]['id']) else selected_target
+    return label
+
+
+def undo_label():
+    return f'Undo {_removed_targets[-1][0]}' if _removed_targets else None
+
+
+def timecode(frame, fps, short=False):
+    """Time at the start of frame `frame` (1-based); short: the duration of `frame` frames."""
+    if not fps:
+        return ''
+    secs = max(0.0, (frame if short else frame - 1) / fps)
+    m, s = divmod(secs, 60)
+    h, m = divmod(int(m), 60)
+    if short:
+        return f'{h}:{m:02d}:{int(s):02d}' if h else f'{m}:{int(s):02d}'
+    return f'{h:02d}:{m:02d}:{s:06.3f}'
+
+
+def set_range(which, frame):
+    """Start or end of the selected video at the frame shown (1-based,
+    inclusive). Returns a note when the other end had to move."""
+    t = target()
+    if t is None or t['kind'] == 'image':
+        return 'Select a video first'
+    frame = max(1, min(int(frame), t['frames']))
+    if which == 'start':
+        t['start'] = frame
+        if t['end'] < frame:
+            t['end'] = t['frames']
+            return 'The end was before this frame, so it moved to the end of the video.'
+    else:
+        t['end'] = frame
+        if t['start'] > frame:
+            t['start'] = 1
+            return 'The start was after this frame, so it moved to the first frame.'
+    return None
+
+
+def reset_range():
+    t = target()
+    if t is not None and t['kind'] != 'image':
+        t['start'], t['end'] = 1, t['frames']
+
+
+def range_text():
+    t = target()
+    if t is None or t['kind'] == 'image':
+        return ''
+    whole = (t['start'], t['end']) == (1, t['frames'])
+    what = 'Whole video' if whole else 'Part of the video'
+    n = t['end'] - t['start'] + 1
+    return (f"**{what}:** frames {t['start']}–{t['end']} of {t['frames']} · "
+            f"{timecode(t['start'], t['fps'])} – {timecode(t['end'] + 1, t['fps'])} ({n} frames)")
+
+
+def set_out_fps(value):
+    t = target()
+    if t is not None and t['kind'] != 'image':
+        t['out_fps'] = max(0.0, float(value or 0))
+
+
+def process_entries():
+    """The render list: fresh entries, the frame range converted to the
+    engine's 0-based [start, end), the painted mask attached to its file."""
+    entries = []
+    for t in targets:
+        if t['kind'] == 'image':
+            e = ProcessEntry(t['path'], 0, 0, 0)
+        else:
+            e = ProcessEntry(t['path'], t['start'] - 1, t['end'], float(t['out_fps'] or 0))
+        e.imagemask = t['mask']
+        entries.append(e)
+    return entries
+
+
+# ----------------------------------------------------------------------------- people (Specific people)
+
+selected_person = 0
+
+
+def people_gallery():
+    return list(ui.globals.ui_target_thumbs)
+
+
+def _unit(emb):
+    e = np.asarray(emb, np.float64).reshape(-1)
+    return e / (np.linalg.norm(e) + 1e-12)
+
+
+def add_person(face, crop):
+    """Add a person to replace; the same person (embedding distance < 0.2)
+    is not added twice. Returns a message."""
+    e = _unit(face.embedding)
+    for existing in G.TARGET_FACES:
+        if 1.0 - float(e @ _unit(existing.embedding)) < 0.2:
+            return 'This person is already in the list'
+    G.TARGET_FACES.append(face)
+    ui.globals.ui_target_thumbs.append(util.convert_to_gradio(crop))
+    return None
+
+
+def remove_selected_person():
+    global selected_person
+    if not G.TARGET_FACES:
+        return False
+    i = min(max(selected_person, 0), len(G.TARGET_FACES) - 1)
+    G.TARGET_FACES.pop(i)
+    ui.globals.ui_target_thumbs.pop(i)
+    selected_person = min(i, len(G.TARGET_FACES) - 1) if G.TARGET_FACES else 0
+    return True
+
+
+def pick_person_at(frame_num, x, y, shown_size):
+    """Add the person whose face is at (x, y) of the preview image shown
+    (shown_size = its (width, height)). Detection as the swap does it
+    (rotated faces too). Returns a message."""
+    from roop.face_util import extract_face_images
+    t = target()
+    if t is None:
+        return 'Add a target file first'
+    if t['kind'] == 'image':
+        found = extract_face_images(t['path'], (False, 0), use_multi_angle=True)
+        from roop.capturer import get_image_frame
+        frame = get_image_frame(t['path'])
+    else:
+        found = extract_face_images(t['path'], (True, int(frame_num)), use_multi_angle=True)
+        from roop.capturer import get_video_frame
+        frame = get_video_frame(t['path'], int(frame_num), exact=True)
+    if not found or frame is None:
+        return 'No face found in this frame'
+    sx = frame.shape[1] / float(shown_size[0])
+    sy = frame.shape[0] / float(shown_size[1])
+    px, py = x * sx, y * sy
+    best, best_d = None, None
+    for face, crop in found:
+        x0, y0, x1, y1 = [float(v) for v in face.bbox[:4]]
+        inside = x0 <= px <= x1 and y0 <= py <= y1
+        d = 0.0 if inside else np.hypot(px - (x0 + x1) / 2, py - (y0 + y1) / 2) / max(x1 - x0, 1)
+        if best_d is None or d < best_d:
+            best, best_d = (face, crop), d
+    if best_d is None or best_d > 1.0:
+        return 'No face at that spot: click on a face'
+    msg = add_person(*best)
+    return msg or 'Person added'
+
+
+# ----------------------------------------------------------------------------- manual mask (per target file)
+
+def set_target_mask(editor_value, frame_num, tid=None):
+    """Keep the painting (editor dict) on the target it was painted on (tid;
+    default the selected one). Returns True when something was painted."""
+    t = target(tid)
+    if t is None:
+        return False
+    layers = (editor_value or {}).get('layers') or []
+    layer = layers[0] if layers else None
+    from roop.ProcessMgr import ProcessMgr
+    if layer is not None and ProcessMgr.manual_mask(layer) is None:
+        layer = None
+    t['mask'] = layer
+    t['mask_frame'] = int(frame_num) if layer is not None else None
+    return layer is not None
+
+
+def clear_target_mask():
+    t = target()
+    if t is not None:
+        t['mask'], t['mask_frame'] = None, None
+
+
+def mask_info():
+    t = target()
+    if t is None:
+        return ''
+    if t['mask'] is None:
+        return 'No painted areas on this file.'
+    where = f" (painted on frame {t['mask_frame']})" if t['kind'] != 'image' else ''
+    return f'**Painted keep-original areas on {t["name"]}**{where}: they stay original in every frame of this file.'
+
+
+# ----------------------------------------------------------------------------- run checks
+
+run_lock = threading.Lock()
+
+
+def readiness():
+    """(ready, markdown): what Start will do, or what is missing, plus warnings."""
+    problems = []
+    if not G.INPUT_FACESETS:
+        problems.append('add a source face')
+    if not targets:
+        problems.append('add a target file')
+    mode = values['mode']
+    if MODES[mode] == 'selected' and not G.TARGET_FACES:
+        problems.append('click the people to replace in the preview')
+    if problems:
+        return False, 'To start: ' + ', '.join(problems) + '.'
+    images = [t for t in targets if t['kind'] == 'image']
+    videos = [t for t in targets if t['kind'] != 'image']
+    parts = []
+    if images:
+        parts.append(f"{len(images)} image{'s' if len(images) != 1 else ''}")
+    if videos:
+        frames = sum(t['end'] - t['start'] + 1 for t in videos)
+        secs = sum((t['end'] - t['start'] + 1) / t['fps'] for t in videos if t['fps'])
+        length = f'{secs:.1f} s' if secs < 10 else timecode(int(round(secs)), 1.0, short=True)
+        parts.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''} ({frames} frames, {length})")
+    who = mode
+    if MODES[mode] == 'all_input':
+        who += f' ({len(G.INPUT_FACESETS)} sources)'
+    elif MODES[mode] == 'selected':
+        who += f' ({len(G.TARGET_FACES)} picked) ← {source_captions[active_source_index()]}'
+    else:
+        who += f' ← {source_captions[active_source_index()]}'
+    text = f"**Ready:** {' + '.join(parts)} · {who}"
+    warnings = run_warnings()
+    if warnings:
+        text += '\n\n' + '\n'.join(f'⚠ {w}' for w in warnings)
+    return True, text
+
+
+def run_warnings():
+    v = values
+    w = []
+    if v['enhancer'] != 'None' and int(str(v['resolution'])[:-2]) > 512:
+        w.append('With an enhancer, swap resolution above 512px only costs time (enhancers work at 512).')
+    if NO_FACE[v['no_face']] == 2 and v['method'] == METHOD_MEMORY and any(t['kind'] != 'image' for t in targets):
+        w.append('"Drop the frame": videos get shorter and the sound drifts where frames are dropped.')
+    if MODES[v['mode']] == 'all_input' and len(G.INPUT_FACESETS) < 2:
+        w.append('"One source per face" with one source: only the leftmost face is swapped.')
+    if v['er'] and ((v['keep_mouth'] and v['er_mouth']) or (v['keep_eyes'] and v['er_eyes'])):
+        w.append("The target's own mouth / eyes replace what the expression restorer made there.")
+    names = [os.path.splitext(t['name'])[0] for t in targets]
+    if len(names) != len(set(names)):
+        w.append('Some targets have the same file name: their results get _2, _3 ... added.')
+    if G.CFG.clear_output:
+        w.append('"Clear output folder before each run" is on (Settings): earlier results there will be deleted.')
+    return w
+
+
+def clear_output_media():
+    """'Clear output folder before each run': delete the earlier results (images,
+    videos, GIFs) in the output folder, not facesets, saved settings or folders."""
+    folder = G.output_path
+    if not folder or not os.path.isdir(folder):
+        return 0
+    removed = 0
+    for f in os.listdir(folder):
+        p = os.path.join(folder, f)
+        if os.path.isfile(p) and is_target_file(p):
+            try:
+                os.remove(p)
+                removed += 1
+            except OSError:
+                pass
+    return removed
+
+
+def reset_after_temp_clean():
+    """Settings > Clean temp folder deleted the uploads. Targets uploaded into
+    the temp folder leave the list (their files are gone); targets added by
+    path stay (their thumbnails come back on the next refresh). Sources and
+    picked people are in memory and stay. Returns the names removed."""
+    global selected_target
+    from roop.capturer import prepare_seek_copy
+    gone = [t for t in targets if not os.path.isfile(t['path'])]
+    targets[:] = [t for t in targets if os.path.isfile(t['path'])]
+    for t in targets:
+        if t['kind'] == 'video':
+            prepare_seek_copy(t['path'])         # its quick-seek copy was in the temp folder
+    if target() is None:
+        selected_target = targets[0]['id'] if targets else None
+    _removed_targets[:] = [(label, [(p, t) for p, t in removed if os.path.isfile(t['path'])])
+                           for label, removed in _removed_targets]
+    _removed_targets[:] = [u for u in _removed_targets if u[1]]
+    return [t['name'] for t in gone]

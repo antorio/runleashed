@@ -67,19 +67,39 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
    The dropzone text ('Drop File Here', '- or -', 'Click to Upload') is partly bare
    text, so we can't hide just one piece by selector. Instead: zero the wrap font
    (hides ALL its text, svg unaffected) and re-add our own single line via ::after. */
-#src_files, #dst_files { min-height: 0 !important; }
+#src_drop, #tgt_drop { min-height: 0 !important; }
 /* Face Management: the status on each photo must stay readable */
 #facemgr_gallery .caption-label { opacity: 1 !important; font-size: 12px !important; max-width: 94% !important; white-space: nowrap; text-overflow: ellipsis; }
 #facemgr_gallery .thumbnail-lg:hover .caption-label { opacity: 1 !important; }
 #facemgr_gallery .grid-wrap { min-height: 360px !important; max-height: 68vh !important; overflow-y: auto !important; }
-#src_files .wrap, #dst_files .wrap,
-#src_files [data-testid="upload"] .wrap, #dst_files [data-testid="upload"] .wrap {
-  min-height: 78px !important; padding: 10px !important; font-size: 0 !important; }
-#src_files .wrap svg, #dst_files .wrap svg { width: 24px !important; height: 24px !important; }
-#src_files .wrap::after, #dst_files .wrap::after {
-  content: "Drop File Here"; display: block; margin-top: 6px;
-  font-size: 14px; font-weight: 500; color: var(--body-text-color-subdued); }
-#src_files .file-preview, #dst_files .file-preview { min-height: 0 !important; }
+#src_drop button[tabindex], #tgt_drop button[tabindex] { height: 72px !important; min-height: 0 !important; }
+#src_drop .wrap, #tgt_drop .wrap { min-height: 0 !important; padding: 6px !important; font-size: 0 !important; }
+#src_drop .wrap svg, #tgt_drop .wrap svg { width: 22px !important; height: 22px !important; }
+#src_drop .wrap::after, #tgt_drop .wrap::after {
+  content: "Drop files here or click"; display: block; margin-top: 4px;
+  font-size: 13px; font-weight: 500; color: var(--body-text-color-subdued); }
+#src_drop .file-preview, #tgt_drop .file-preview { min-height: 0 !important; }
+
+/* ---------- Face Swap: lists, hints, run bar ---------- */
+#src_gal .grid-container, #tgt_gal .grid-container { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+#people_gal .grid-container { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+#src_gal .thumbnail-item, #tgt_gal .thumbnail-item, #people_gal .thumbnail-item { min-height: 0 !important; }
+#src_gal .thumbnail-item.selected, #tgt_gal .thumbnail-item.selected, #people_gal .thumbnail-item.selected {
+  outline: 3px solid var(--color-accent) !important; outline-offset: -3px; }
+#src_gal .caption-label, #tgt_gal .caption-label { opacity: 1 !important; font-size: 11px !important; max-width: 94% !important;
+  white-space: nowrap; text-overflow: ellipsis; }
+.fs-step h3 { margin: 6px 0 0 !important; }
+.fs-hint, .fs-hint * { font-size: 12.5px !important; color: var(--body-text-color-subdued) !important; }
+#mode_radio .wrap { flex-direction: column !important; align-items: stretch !important; gap: 4px !important; }
+#run_bar { align-items: center !important; }
+#ready_line, #ready_line * { font-size: 13px !important; }
+#status_line, #status_line * { font-size: 13px !important; }
+/* Gradio dims a Markdown to 20% while any event writing it runs; the readiness
+   line is refreshed by every preview, so it was faded most of the time */
+#ready_line .pending, #status_line .pending, #fs_left .pending { opacity: 1 !important; }
+#ready_line code, #status_line code { white-space: normal; word-break: break-all; }
+#mask_editor button[aria-label="Clear canvas"] { display: none !important; }
+#results .label-clear-button { display: none !important; }
 
 /* ---------- Eyes / Mouth / Brows forced onto a single row ----------
    Gradio groups the 3 adjacent checkboxes into a .form wrapper that wraps at 2.
@@ -93,9 +113,18 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 .facegrid .grid-wrap, .facegrid .grid-container { overflow-y: auto !important; }
 .facegrid { min-height: 0 !important; }
 
-/* ---------- center column: stacking context for the JS sticky ---------- */
+/* ---------- centre column stays in view while the settings scroll ----------
+   Pure CSS sticky (the container's overflow:hidden blocked it before). Only
+   where the three columns fit side by side; the column scrolls on its own
+   when it is taller than the window. */
+.gradio-container { overflow: unset !important; }
 #swap_row { align-items: flex-start !important; }
-#center_stage { position: relative !important; z-index: 5; will-change: transform; }
+@media (min-width: 1200px) {
+  #swap_row { flex-wrap: nowrap !important; }
+  #center_stage { position: sticky; top: 8px; align-self: flex-start; max-height: calc(100vh - 16px);
+                  overflow-y: auto; flex-wrap: nowrap !important; }
+  #center_stage > * { flex-shrink: 0 !important; }
+}
 
 /* ---------- tidy spacing ---------- */
 .block { border-radius: 8px; }
@@ -109,28 +138,8 @@ footer { display: none !important; }
 }
 """
 
-# Runs on app load (gr.Blocks(js=...)). Pure-JS "fake sticky": a permanent rAF
-# loop translates the center column to follow scroll, clamped within its row.
-# js= is used (not head=<script>) because head scripts are injected as inert text
-# in Gradio and never execute, whereas js= is guaranteed to run on load.
+# Runs on app load (gr.Blocks(js=...)). The centre column used to follow the
+# scroll with a requestAnimationFrame loop; CSS sticky does it now.
 runleashed_js = """
-async () => {
-  const TOP = 8;
-  let last = null;
-  function tick() {
-    const col = document.querySelector('#center_stage');
-    const row = document.querySelector('#swap_row');
-    if (col && row && col.offsetWidth !== 0) {
-      const rowTop = row.getBoundingClientRect().top;
-      let shift = TOP - rowTop;
-      if (shift < 0) shift = 0;
-      let maxShift = row.offsetHeight - col.offsetHeight;
-      if (maxShift < 0) maxShift = 0;
-      if (shift > maxShift) shift = maxShift;
-      if (shift !== last) { col.style.transform = 'translateY(' + shift + 'px)'; last = shift; }
-    }
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-}
+() => {}
 """

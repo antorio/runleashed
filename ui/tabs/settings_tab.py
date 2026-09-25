@@ -92,7 +92,10 @@ def settings_tab():
     memory_limit.input(fn=lambda a,b='memory_limit':on_settings_changed_misc(a,b), inputs=[memory_limit])
     video_quality.input(fn=lambda a,b='video_quality':on_settings_changed_misc(a,b), inputs=[video_quality])
 
-    button_clean_temp.click(fn=clean_temp)
+    from ui.tabs import faceswap_tab as fs
+    # in the Face Swap tab's group: it changes that tab's target list
+    button_clean_temp.click(fn=clean_temp, outputs=fs.refresh_outputs(), show_api=False,
+                            concurrency_id='fs_state', concurrency_limit=1)
     button_apply_settings.click(apply_settings, inputs=[themes, input_server_name, input_server_port, output_template, max_threads, memory_limit, video_quality])
     button_apply_restart.click(restart)
 
@@ -155,22 +158,28 @@ def on_settings_changed(evt: gr.SelectData):
     raise gr.Error(f'Unhandled Setting for {evt.target}')
 
 def clean_temp():
+    """Empty ./temp. Face Swap targets uploaded into it leave that tab's list
+    (sources and targets added by path stay) and the tab is refreshed (the
+    returned values fill faceswap_tab.refresh_outputs())."""
     from ui.main import prepare_environment
     from roop.utilities import clean_temp_folder
+    from ui.tabs import faceswap_tab as fs, faceswap_state
 
-    if roop.globals.processing:
+    if fs._rendering() or roop.globals.processing:
         gr.Warning('A render is running: its files are in the temp folder. Clean it when the render is done.')
-        return
+        return fs.refresh_values()
     if roop.globals.CFG.use_os_temp_folder:
         gr.Warning('"Use OS temp folder" is on: the system temp folder is not cleaned by the app.')
-        return
-    ui.globals.ui_input_thumbs.clear()
-    roop.globals.INPUT_FACESETS.clear()
-    roop.globals.TARGET_FACES.clear()
-    ui.globals.ui_target_thumbs = []
+        return fs.refresh_values()
     freed = clean_temp_folder()
     prepare_environment()
-    gr.Info(f'Temp folder emptied: {freed / 1e6:.0f} MB freed. Add source / target files again.')
+    gone = faceswap_state.reset_after_temp_clean()
+    text = f'Temp folder emptied: {freed / 1e6:.0f} MB freed.'
+    if gone:
+        text += (f' {len(gone)} uploaded target file{"s were" if len(gone) != 1 else " was"} in it and left the '
+                 f'Face Swap list ({", ".join(gone[:3])}{" ..." if len(gone) > 3 else ""}): upload again to use.')
+    gr.Info(text)
+    return fs.refresh_values()
 
 
 def apply_settings(themes, input_server_name, input_server_port, output_template, max_threads, memory_limit, video_quality):

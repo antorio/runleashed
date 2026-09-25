@@ -35,6 +35,7 @@ _undo = []              # [(label, [(position, entry), ...])], newest last
 _next_id = 0
 _video_path = None
 current_video_fps = 0
+_last_saved = None          # the .fsz written by the last Save (for 'Use in Face Swap')
 
 SHOW_ALL, SHOW_ATTENTION = 'All photos', 'Needs attention'
 _filter = SHOW_ALL
@@ -80,6 +81,7 @@ def facemgr_tab() -> None:
                 btn_save = gr.Button("Save faceset", variant="primary", interactive=False)
                 save_file = gr.File(label="Saved faceset", interactive=False, visible=False)
                 save_msg = gr.Markdown()
+                btn_use_in_swap = gr.Button("Use in Face Swap", visible=False)
             with gr.Column(scale=6, min_width=420):
                 gr.Markdown("### 2 · Review")
                 summary = gr.Markdown(_summary_text())
@@ -129,7 +131,13 @@ def facemgr_tab() -> None:
     btn_cancel_clear.click(fn=lambda: [gr.Button(visible=True), gr.Button(visible=False), gr.Button(visible=False)],
                            outputs=[btn_start_over, btn_confirm_clear, btn_cancel_clear], **one)
     btn_confirm_clear.click(fn=on_start_over, outputs=[btn_start_over, btn_confirm_clear, btn_cancel_clear, save_file, save_msg] + view, **one)
-    btn_save.click(fn=on_save, inputs=[save_name], outputs=[save_file, save_msg], **one)
+    btn_save.click(fn=on_save, inputs=[save_name], outputs=[save_file, save_msg, btn_use_in_swap], **one)
+    from ui.tabs import faceswap_tab as fs
+    # in the Face Swap tab's group: it changes that tab's source list
+    btn_use_in_swap.click(fn=lambda: fs.add_faceset_to_sources(_last_saved), outputs=fs.refresh_outputs(),
+                          concurrency_id='fs_state', concurrency_limit=1).then(
+        fn=fs.src_highlight,
+        outputs=fs.C['src_gal'], show_progress='hidden')
 
 
 # ----------------------------------------------------------------------------- state
@@ -525,9 +533,10 @@ def on_start_over():
 
 
 def on_save(name):
+    global _last_saved
     if not entries:
         gr.Warning('No photos to save')
-        return [gr.File(visible=False), gr.Markdown('')]
+        return [gr.File(visible=False), gr.Markdown(''), gr.Button(visible=False)]
     base = re.sub(r'[^\w\-]+', '_', (name or '').strip()).strip('_') or 'faceset'
     target = os.path.join(roop.globals.output_path, base + '.fsz')
     n = 2
@@ -547,5 +556,7 @@ def on_save(name):
     flagged = sum(1 for e in entries if _needs_attention(e))
     note = f" ({flagged} still flagged)" if flagged else ''
     renamed = f" `{base}.fsz` already existed, so it was saved under a new name." if os.path.basename(target) != base + '.fsz' else ''
+    _last_saved = target
     return [gr.File(value=target, visible=True),
-            gr.Markdown(f"Saved **{len(entries)} photos**{note} to `{target}`.{renamed}")]
+            gr.Markdown(f"Saved **{len(entries)} photos**{note} to `{target}`.{renamed}"),
+            gr.Button(visible=True)]
