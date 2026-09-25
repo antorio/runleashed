@@ -2,10 +2,11 @@
 ui/tabs/faceswap_state.py (S).
 
 Layout, left to right in the order you work (compact for a 1920x1080 screen):
-  1 Source faces · 2 Target files · 3 Faces to replace  |  preview on top,
-  then frame (◀ ▶, arrow keys) · range · view · Ready + Start / Stop · status ·
-  results  |  settings in accordions (Swap, Expression, Occlusion, Enhance,
-  Detection & tracking, Video output).
+  Source faces · Target files · Faces to replace (titled boxes)  |  preview on
+  top, then frame (◀ ▶, arrow keys) · range · view · Ready + Start / Stop ·
+  status  |  settings in boxes (Swap, Expression, Occlusion, Enhance,
+  Detection & tracking, Video output), defaults at the bottom. Results are
+  not shown here: they are in the output folder the status line names.
 
 How the preview follows the settings: every setting's .change bumps a hidden
 counter in the browser (js only, no server call); the counter's .change runs
@@ -52,9 +53,6 @@ STEP_JS = '''(n) => {
 
 settings = {}              # key -> component
 C = {}                     # other components by name (for the load / cross-tab refresh)
-_preview = {'size': None, 'view': None}      # what the preview image currently shows
-last_results = []          # files of the last run
-selected_result = None
 
 
 def _s(key, comp):
@@ -176,15 +174,24 @@ def faceswap_tab():
 
                 with gr.Accordion(_title("Faces to replace", 'faces'), open=True) as acc_faces:
                     C['acc_faces'] = acc_faces
-                    mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
-                                                  elem_id="mode_dd"))
+                    with gr.Row(equal_height=True):
+                        mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
+                                                      scale=3, elem_id="mode_dd"))
+                        # one face in the frame: it is added right away; several: pick one below
+                        C['btn_use_face'] = gr.Button("Use face from this frame", size="sm", scale=2, min_width=150)
+                    with gr.Column(visible=False, elem_id="picker_col") as picker_col:
+                        C['picker_col'] = picker_col
+                        with gr.Row(equal_height=True):
+                            gr.Markdown("Several faces in this frame: click the one to replace.", elem_classes="fs-line")
+                            C['btn_pick_cancel'] = gr.Button("Cancel", size="sm", scale=0, min_width=70)
+                        C['picker_gal'] = gr.Gallery(show_label=False, columns=6, allow_preview=False, preview=False,
+                                                     interactive=False, object_fit="contain", height="100px",
+                                                     elem_id="picker_gal")
                     with gr.Column(visible=S.MODES[V['mode']] == 'selected', elem_id="people_col") as people_col:
                         C['people_col'] = people_col
-                        C['people_hint'] = gr.Markdown("Click faces in the preview to add them.", visible=not G.TARGET_FACES,
-                                                       elem_classes="fs-line")
                         C['people_gal'] = gr.Gallery(value=S.people_gallery(), show_label=False, columns=5, allow_preview=False,
                                                      preview=False, interactive=False, object_fit="contain", height="100px",
-                                                     elem_id="people_gal")
+                                                     visible=bool(G.TARGET_FACES), elem_id="people_gal")
                         C['people_x'] = gr.Textbox(elem_id="people_x", elem_classes="fs-hidden", show_label=False, container=False)
                         _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01,
                                                   label="Match tolerance (higher = looser)"))
@@ -193,7 +200,6 @@ def faceswap_tab():
             with gr.Column(scale=5, min_width=460, elem_id="center_stage"):
                 C['preview'] = gr.Image(label="Preview", interactive=False, format="jpeg", height="56vh",
                                         show_download_button=False, show_fullscreen_button=True, elem_id="preview_img")
-                C['result_video'] = gr.Video(label="Result", visible=False, height="56vh", interactive=False)
                 with gr.Column(visible=False) as editor_col:
                     C['editor_col'] = editor_col
                     C['editor'] = gr.ImageEditor(type="numpy", sources=(), transforms=(), layers=False, height="56vh",
@@ -229,7 +235,6 @@ def faceswap_tab():
                     C['btn_stop'] = gr.Button("⏹ Stop", variant="secondary", scale=0, min_width=90,
                                               interactive=S.run_lock.locked())
                 C['status_md'] = gr.Markdown("", elem_id="status_line")
-                C['results'] = gr.Files(label="Results of the last run", interactive=False, visible=False, elem_id="results")
 
             # --------------------------------------------------------------- right: settings
             with gr.Column(scale=3, min_width=300, elem_id="fs_settings"):
@@ -367,13 +372,11 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
 
     # preview (it also refreshes the section headers)
     preview_inputs = set(settings.values()) | {C['view'], C['frame'], C['auto'], tick}
-    preview_outputs = [C['preview'], C['result_video'], C['ready_md']] + [C[k] for k in HEADER_KEYS]
+    preview_outputs = [C['preview'], C['ready_md']] + [C[k] for k in HEADER_KEYS]
     tick.change(on_preview, preview_inputs, preview_outputs, trigger_mode="always_last", concurrency_id="fs_preview",
                 concurrency_limit=1, show_progress="hidden", **INTERNAL)
     C['btn_refresh'].click(lambda d: on_preview(d, force=True), preview_inputs, preview_outputs, concurrency_id="fs_preview",
                            concurrency_limit=1, show_progress="hidden", **INTERNAL)
-    people_out = [C['people_gal'], C['people_hint'], C['ready_md'], tick]
-    C['preview'].select(on_preview_click, [C['frame'], C['view'], tick], people_out, **one)
 
     # sources
     det = [settings['det_thresh'], settings['det_size']]
@@ -408,8 +411,12 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['btn_whole'].click(lambda f: on_range('whole', f), [C['frame']], range_out, **one)
     C['out_fps'].input(on_out_fps, [C['out_fps']], None, **one)
 
-    # people
-    C['people_x'].input(on_person_x, [C['people_x'], tick], people_out, **one)
+    # people: "Use face from this frame", the picker for several faces, the × on each
+    use_out = [mode, C['picker_col'], C['picker_gal'], C['people_gal'], C['ready_md'], tick]
+    C['btn_use_face'].click(on_use_face, [C['frame'], tick], use_out, **slow)
+    C['picker_gal'].select(on_pick_face, [tick], use_out, **one)
+    C['btn_pick_cancel'].click(on_pick_cancel, None, [C['picker_col'], C['picker_gal']], **one)
+    C['people_x'].input(on_person_x, [C['people_x'], tick], [C['people_gal'], C['ready_md'], tick], **one)
 
     # painted keep-original mask
     paint_out = [C['editor_col'], C['preview'], C['editor'], C['paint_md'], C['btn_paint_remove'], C['acc_occ'],
@@ -422,13 +429,12 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
 
     # run
     run_inputs = set(settings.values()) | {tick}
-    start = C['btn_start'].click(on_start_check, run_inputs, [C['btn_start'], C['btn_stop'], C['status_md'], C['results']],
+    start = C['btn_start'].click(on_start_check, run_inputs, [C['btn_start'], C['btn_stop'], C['status_md']],
                                  show_progress="hidden", **INTERNAL)
     render = start.success(on_render, None, [C['status_md']], show_progress="full", **INTERNAL)
-    render.then(on_render_done, [tick], [C['btn_start'], C['btn_stop'], C['status_md'], C['results'], C['view'],
-                                        C['ready_md'], tick], show_progress="hidden", **INTERNAL)
+    render.then(on_render_done, [tick], [C['btn_start'], C['btn_stop'], C['ready_md'], tick],
+                show_progress="hidden", **INTERNAL)
     C['btn_stop'].click(on_stop, None, [C['btn_stop'], C['status_md']], queue=False, **INTERNAL)
-    C['results'].select(on_result_select, [C['results'], tick], [C['view'], tick], **one)
 
     # defaults
     C['btn_save_def'].click(on_save_defaults, set(settings.values()), [C['btn_load_def']], **one)
@@ -455,7 +461,7 @@ def refresh_outputs():
     return [C['src_gal'], C['btn_src_combine'], C['btn_src_shuffle'],
             C['tgt_files'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
             C['paint_md'], C['btn_paint_remove'],
-            C['people_col'], C['people_gal'], C['people_hint'],
+            C['people_col'], C['people_gal'],
             C['ready_md'], C['btn_start'], C['btn_stop'], C['tick']]
 
 
@@ -494,7 +500,7 @@ def _tgt_updates():
 
 
 def _people_updates():
-    return [gr.Gallery(value=S.people_gallery()), gr.Markdown(visible=not G.TARGET_FACES)]
+    return [gr.Gallery(value=S.people_gallery(), visible=bool(G.TARGET_FACES))]
 
 
 def _messages(messages):
@@ -623,22 +629,52 @@ def on_out_fps(value):
 
 # ============================================================================ handlers: people
 
+_picker = []                # [(face, crop)] offered by the picker
+
+
+def _specific_people():
+    return next(k for k, v in S.MODES.items() if v == 'selected')
+
+
+def _picked(face, crop, tick):
+    """Add a face to the faces to replace; the mode follows (as it always did)."""
+    problem = S.add_person(face, crop)
+    if problem:
+        gr.Warning(problem)
+    _picker.clear()
+    S.values['mode'] = _specific_people()
+    return [gr.Dropdown(value=_specific_people()), gr.Column(visible=False), gr.Gallery(value=None)] + \
+        _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+
+
+def on_use_face(frame, tick):
+    found, problem = S.faces_in_frame(frame)
+    if problem:
+        gr.Warning(problem)
+        return [gr.skip()] * 6
+    if len(found) == 1:
+        return _picked(*found[0], tick)
+    _picker[:] = found
+    return [gr.skip(), gr.Column(visible=True),
+            gr.Gallery(value=[util.convert_to_gradio(crop) for _, crop in found], selected_index=None),
+            gr.skip(), gr.skip(), gr.skip()]
+
+
+def on_pick_face(evt: gr.SelectData, tick):
+    if evt is None or not 0 <= evt.index < len(_picker):
+        return [gr.skip()] * 6
+    return _picked(*_picker[evt.index], tick)
+
+
+def on_pick_cancel():
+    _picker.clear()
+    return [gr.Column(visible=False), gr.Gallery(value=None)]
+
+
 def on_person_x(value, tick):
     i = _clicked_index(value)
     if i is None or not S.remove_person(i):
-        return [gr.skip()] * 4
-    return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
-
-
-def on_preview_click(evt: gr.SelectData, frame, view, tick):
-    if S.MODES[S.values['mode']] != 'selected':
-        return [gr.skip()] * 4                             # clicking the preview only picks in Specific people
-    if view not in ('Original', 'Swapped') or not _preview['size'] or evt is None:
-        _info('Pick people in the Original or Swapped view')
-        return [gr.skip()] * 4
-    x, y = evt.index[0], evt.index[1]
-    msg = S.pick_person_at(frame, x, y, _preview['size'])
-    (_info if msg == 'Person added' else gr.Warning)(msg)
+        return [gr.skip()] * 3
     return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
@@ -755,33 +791,29 @@ def on_preview(data, force=False):
         return _render_view(view, frame_num, auto or force)
 
     try:
-        ran, out = core.preview_locked(work)
+        ran, image = core.preview_locked(work)
     except Exception as e:
         traceback.print_exc()
-        return [gr.Image(label=f'Preview failed: {e}'), gr.Video(visible=False), gr.skip()] + [gr.skip()] * len(HEADERS)
+        return [gr.Image(label=f'Preview failed: {e}'), gr.skip()] + [gr.skip()] * len(HEADERS)
     if not ran:
-        return [gr.Image(label='Preview paused while rendering'), gr.skip(), gr.skip()] + [gr.skip()] * len(HEADERS)
-    image, video = out
+        return [gr.Image(label='Preview paused while rendering'), gr.skip()] + [gr.skip()] * len(HEADERS)
     if _painting['tid'] is not None:
-        image, video = gr.skip(), gr.skip()        # the editor stands in for the preview until Done / Cancel
-    return [image, video, gr.Markdown(S.readiness()[1])] + _headers()
+        image = gr.skip()                            # the editor stands in for the preview until Done / Cancel
+    return [image, gr.Markdown(S.readiness()[1])] + _headers()
 
 
 def _render_view(view, frame_num, swap_now):
-    """(image update, video update) for the preview area."""
+    """The preview image update for this view."""
     from roop import core
-    if view == 'Result':
-        return _result_view()
     t = S.target()
     if t is None:
-        _preview['size'] = None
-        return gr.Image(value=None, label='Preview — add a target file', visible=True), gr.Video(visible=False)
+        return gr.Image(value=None, label='Preview — add a target file', visible=True)
     if not os.path.isfile(t['path']):
-        return gr.Image(value=None, label='Preview — this file is gone (temp folder cleaned?): add it again', visible=True), gr.Video(visible=False)
+        return gr.Image(value=None, label='Preview — this file is gone (temp folder cleaned?): add it again', visible=True)
     t_start = time.perf_counter()
     frame = get_image_frame(t['path']) if t['kind'] == 'image' else get_video_frame(t['path'], frame_num)
     if frame is None:
-        return gr.Image(value=None, label=_label(t, frame_num, 'frame could not be read'), visible=True), gr.Video(visible=False)
+        return gr.Image(value=None, label=_label(t, frame_num, 'frame could not be read'), visible=True)
 
     note = ''
     shown = frame
@@ -792,11 +824,11 @@ def _render_view(view, frame_num, swap_now):
         note = 'green = swapped' + (f' ({warn})' if warn else '' if plugin else ' (no occlusion mask)')
     elif view in ('Swapped', 'Side by side'):
         if not swap_now:
-            return gr.skip(), gr.skip()                   # auto-update off: Refresh does it
+            return gr.skip()                              # auto-update off: Refresh does it
         if not G.INPUT_FACESETS:
             note = 'add a source face'
         elif S.MODES[S.values['mode']] == 'selected' and not G.TARGET_FACES:
-            pass                                          # the pick hint below says what to do
+            note = 'no faces picked yet'
         else:
             swapped = core.live_swap(frame.copy(), S.build_options())
             if swapped is None or np.array_equal(swapped, frame):
@@ -812,25 +844,7 @@ def _render_view(view, frame_num, swap_now):
         t_done = time.perf_counter()
         print(f'[preview] frame {frame_num}: load {(t_swap - t_start) * 1000:.0f} ms | {view.lower()} '
               f'{(t_done - t_swap) * 1000:.0f} ms | total {(t_done - t_start) * 1000:.0f} ms', flush=True)
-    _preview['size'] = (image.shape[1], image.shape[0]) if view in ('Original', 'Swapped') else None
-    _preview['view'] = view
-    pick = ('click faces in the preview' if S.MODES[S.values['mode']] == 'selected' and not G.TARGET_FACES
-            and view in ('Original', 'Swapped') else '')
-    note = ' · '.join(x for x in (note, pick) if x)
-    return gr.Image(value=image, label=_label(t, frame_num, note), visible=True), gr.Video(visible=False)
-
-
-def _result_view():
-    path = selected_result or (last_results[0] if last_results else None)
-    if not path or not os.path.isfile(path):
-        return gr.Image(value=None, label='Result — nothing rendered yet in this session', visible=True), gr.Video(visible=False)
-    name = os.path.basename(path)
-    if util.is_video(path) and G.CFG.output_show_video:
-        return gr.Image(visible=False), gr.Video(value=path, label=f'Result — {name}', visible=True)
-    frame = get_video_frame(path, 1, exact=True) if (util.is_video(path) or path.lower().endswith('.gif')) else get_image_frame(path)
-    if frame is None:
-        return gr.Image(value=None, label=f'Result — {name} could not be read', visible=True), gr.Video(visible=False)
-    return gr.Image(value=util.convert_to_gradio_preview(frame), label=f'Result — {name}', visible=True), gr.Video(visible=False)
+    return gr.Image(value=image, label=_label(t, frame_num, note), visible=True)
 
 
 # ============================================================================ run
@@ -868,11 +882,11 @@ def on_start_check(data):
     _pending.update(_vals(data))
     core.stop_requested = False
     _starting = time.time()
-    return [gr.Button(interactive=False), gr.Button(interactive=True), gr.Markdown('Starting ...'), gr.Files(visible=False)]
+    return [gr.Button(interactive=False), gr.Button(interactive=True), gr.Markdown('Rendering …')]
 
 
 def on_render(progress=gr.Progress()):
-    global last_results, selected_result, _starting
+    global _starting
     from roop import core
     from ui.main import prepare_environment
     if not S.run_lock.acquire(blocking=False):
@@ -902,21 +916,21 @@ def on_render(progress=gr.Progress()):
                                        bool(v['keep_eyes']), int(v['passes']), progress, source)
         finally:
             core.render_active = False
-        last_results = [e.finalname for e in entries if getattr(e, 'completed', False) and os.path.isfile(e.finalname)]
-        selected_result = last_results[0] if last_results else None
+        finished = [e.finalname for e in entries if getattr(e, 'completed', False) and os.path.isfile(e.finalname)]
         secs = time.time() - started
-        done = f'{len(last_results)} of {len(entries)} file{"s" if len(entries) != 1 else ""}'
+        done = f'{len(finished)} of {len(entries)} file{"s" if len(entries) != 1 else ""}'
         stopped = not G.processing
         G.processing = False
-        if stopped and len(last_results) < len(entries):
+        if stopped and len(finished) < len(entries):
             partial = [os.path.basename(e.finalname) for e in entries
                        if not getattr(e, 'completed', False) and e.finalname and os.path.isfile(e.finalname)]
-            text = (f'**Stopped** after {secs:.0f} s: {done} finished, saved in `{G.output_path}`.' if last_results
+            text = (f'**Stopped** after {secs:.0f} s: {done} finished, saved in `{G.output_path}`.' if finished
                     else f'**Stopped** after {secs:.0f} s, before a file was finished.')
             if partial:
                 text += f' The interrupted part is left as `{partial[0]}` (no sound; the next run overwrites it).'
             return gr.Markdown(text)
-        return gr.Markdown(f'**Done** in {secs:.0f} s: {done} saved in `{G.output_path}`.')
+        what = f'`{os.path.basename(finished[0])}`' if len(finished) == 1 else done
+        return gr.Markdown(f'**Done** in {secs:.0f} s: {what} saved in `{G.output_path}`.')
     except Exception as e:
         traceback.print_exc()
         G.processing = False
@@ -929,9 +943,7 @@ def on_render(progress=gr.Progress()):
 
 def on_render_done(tick):
     running = _rendering()
-    view = gr.Radio(value='Result') if last_results else gr.skip()
-    return [gr.Button(interactive=not running), gr.Button(interactive=running), gr.skip(),
-            gr.Files(value=last_results or None, visible=bool(last_results)), view,
+    return [gr.Button(interactive=not running), gr.Button(interactive=running),
             gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
@@ -942,15 +954,6 @@ def on_stop():
     core.stop_requested = True        # also when the render is still starting
     G.processing = False
     return [gr.Button(interactive=False), gr.Markdown('Stopping: the frames being processed finish first ...')]
-
-
-def on_result_select(evt: gr.SelectData, files, tick):
-    global selected_result
-    if evt is None or not files:
-        return [gr.skip(), gr.skip()]
-    f = files[evt.index]
-    selected_result = getattr(f, 'name', None) or str(f)
-    return [gr.Radio(value='Result'), (tick or 0) + 1]
 
 
 # ============================================================================ defaults

@@ -208,6 +208,12 @@ class ProcessMgr():
     def __init__(self, progress):
         if progress is not None:
             self.progress_gradio = progress
+            # gr.Progress finds its event through context variables, which the
+            # frame worker threads do not inherit: called from a worker it did
+            # nothing, so the UI never showed a render's progress. Its updates
+            # run in a copy of this (the event's) context instead.
+            import contextvars
+            self._progress_context = contextvars.copy_context()
 
     def reuseOldProcessor(self, name:str):
         for p in self.processors:
@@ -621,8 +627,13 @@ class ProcessMgr():
             # UI stuck on "processing" forever). Also serialize the calls: 8
             # workers pushing progress concurrently is not guaranteed safe.
             try:
-                with self._progress_gradio_lock:
-                    self.progress_gradio((progress.n, self.total_frames), desc='Processing', total=self.total_frames, unit='frames')
+                with self._progress_gradio_lock:          # one thread at a time in the copied context
+                    context = getattr(self, '_progress_context', None)
+                    update = (progress.n, self.total_frames)
+                    if context is not None:
+                        context.run(self.progress_gradio, update, desc='Processing', total=self.total_frames, unit='frames')
+                    else:
+                        self.progress_gradio(update, desc='Processing', total=self.total_frames, unit='frames')
             except Exception as e:
                 print(f"[finish] gradio progress tracker failed ({e}); continuing render without UI progress")
                 self.progress_gradio = None

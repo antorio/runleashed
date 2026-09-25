@@ -85,6 +85,10 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 /* ---------- Face Swap: lists, hints, run bar ---------- */
 #src_gal .grid-container { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
 #people_gal .grid-container { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; }
+#picker_gal .grid-container { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+#picker_gal .thumbnail-item { min-height: 0 !important; cursor: pointer; }
+#picker_gal .thumbnail-item:hover { outline: 3px solid var(--color-accent) !important; outline-offset: -3px; }
+#picker_gal .empty { min-height: 0 !important; height: 90px !important; }
 #src_gal .thumbnail-item, #people_gal .thumbnail-item { min-height: 0 !important; position: relative !important; }
 #src_gal .thumbnail-item.selected, #people_gal .thumbnail-item.selected {
   outline: 3px solid var(--color-accent) !important; outline-offset: -3px; }
@@ -94,6 +98,9 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 #ready_line, #ready_line * { font-size: 13px !important; }
 #ready_line p { margin: 0 0 2px !important; }
 #status_line, #status_line * { font-size: 13px !important; }
+/* while a render runs Gradio draws its progress (bar, frames, time) over the
+   status line: give it room */
+#status_line:has(> .wrap:not(.hide)) { min-height: 72px !important; }
 #range_line, #range_line * { color: var(--body-text-color-subdued) !important; }
 
 /* ---------- Face Swap: compact spacing (1920x1080 target) ---------- */
@@ -134,7 +141,6 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 #ready_line .pending, #status_line .pending, #fs_left .pending { opacity: 1 !important; }
 #ready_line code, #status_line code { white-space: normal; word-break: break-all; }
 #mask_editor button[aria-label="Clear canvas"] { display: none !important; }
-#results .label-clear-button { display: none !important; }
 
 /* ---------- Eyes / Mouth / Brows forced onto a single row ----------
    Gradio groups the 3 adjacent checkboxes into a .form wrapper that wraps at 2.

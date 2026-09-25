@@ -61,7 +61,7 @@ ENHANCERS = {'None': 'None', 'GFPGAN': 'GFPGAN', 'CodeFormer': 'Codeformer', 'Re
 RESOLUTIONS = ['128px', '256px', '512px', '768px', '1024px']
 METHOD_MEMORY, METHOD_EXTRACT = 'In memory (recommended)', 'Extract frames to disk'
 MULTI_ANGLE = {'Off': 'off', 'Only when no upright face is found': 'fallback', 'Always (slower)': 'always'}
-VIEWS = ['Original', 'Swapped', 'Side by side', 'Mask', 'Result']
+VIEWS = ['Original', 'Swapped', 'Side by side', 'Mask']
 
 # accepted exactly as the render accepts them (roop.core.batch_process)
 def is_target_file(path):
@@ -789,38 +789,20 @@ def remove_person(index):
     return True
 
 
-def pick_person_at(frame_num, x, y, shown_size):
-    """Add the person whose face is at (x, y) of the preview image shown
-    (shown_size = its (width, height)). Detection as the swap does it
-    (rotated faces too). Returns a message."""
+def faces_in_frame(frame_num):
+    """([(face, crop)], problem) for the frame the preview shows, found as
+    the swap finds them (rotated faces too), left to right."""
     from roop.face_util import extract_face_images
     t = target()
     if t is None:
-        return 'Add a target file first'
+        return [], 'Add a target file first'
     if t['kind'] == 'image':
         found = extract_face_images(t['path'], (False, 0), use_multi_angle=True)
-        from roop.capturer import get_image_frame
-        frame = get_image_frame(t['path'])
     else:
-        found = extract_face_images(t['path'], (True, int(frame_num)), use_multi_angle=True)
-        from roop.capturer import get_video_frame
-        frame = get_video_frame(t['path'], int(frame_num), exact=True)
-    if not found or frame is None:
-        return 'No face found in this frame'
-    sx = frame.shape[1] / float(shown_size[0])
-    sy = frame.shape[0] / float(shown_size[1])
-    px, py = x * sx, y * sy
-    best, best_d = None, None
-    for face, crop in found:
-        x0, y0, x1, y1 = [float(v) for v in face.bbox[:4]]
-        inside = x0 <= px <= x1 and y0 <= py <= y1
-        d = 0.0 if inside else np.hypot(px - (x0 + x1) / 2, py - (y0 + y1) / 2) / max(x1 - x0, 1)
-        if best_d is None or d < best_d:
-            best, best_d = (face, crop), d
-    if best_d is None or best_d > 1.0:
-        return 'No face at that spot: click on a face'
-    msg = add_person(*best)
-    return msg or 'Person added'
+        found = extract_face_images(t['path'], (True, int(frame_num or 1)), use_multi_angle=True)
+    if not found:
+        return [], 'No face found in this frame'
+    return found, None
 
 
 # ----------------------------------------------------------------------------- manual mask (per target file)
@@ -872,7 +854,7 @@ def readiness():
         problems.append('add a target file')
     mode = values['mode']
     if MODES[mode] == 'selected' and not G.TARGET_FACES:
-        problems.append('click faces in the preview')
+        problems.append('pick the faces with "Use face from this frame"')
     if problems:
         return False, 'To start: ' + ', '.join(problems) + '.'
     images = [t for t in targets if t['kind'] == 'image']
