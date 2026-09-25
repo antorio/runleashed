@@ -42,15 +42,6 @@ MODES = {                           # label -> ProcessMgr swap mode
     'All men': 'all_male',
     'One source per face (left to right)': 'all_input',
 }
-MODE_INFO = {
-    'Largest face': 'The biggest face in each frame gets the active source.',
-    'All faces': 'Every detected face gets the active source, background faces too.',
-    'Specific people': 'Only the people you pick in the preview get the active source.',
-    'All women': 'Every face the detector reads as female gets the active source.',
-    'All men': 'Every face the detector reads as male gets the active source.',
-    'One source per face (left to right)': 'Counted from the left in each frame: 1st face ← 1st source, 2nd ← 2nd, ... '
-                                           'When people cross, their sources swap too.',
-}
 NO_FACE = {                         # label -> roop.globals.no_face_action
     'Keep the original frame': 0,
     'Try rotated, else keep the original': 1,
@@ -289,7 +280,7 @@ def summary(section):
     if section == 'occlusion':
         parts = [v['mask_engine']]
         if any(t.get('mask') is not None for t in targets):
-            parts.append('painted mask')
+            parts.append('painted')
         return ' · '.join(parts)
     if section == 'enhance':
         return 'none' if v['enhancer'] == 'None' else f"{v['enhancer']} · {float(v['enhancer_blend']):.2f}"
@@ -338,18 +329,15 @@ def sources_gallery():
 def source_info():
     _sync_sources()
     n = len(G.INPUT_FACESETS)
-    if n == 0:
-        return 'No source yet: drop photos of the face to use, or a faceset (.fsz).'
-    if MODES[values['mode']] == 'all_input':
-        return f'{n} source{"s" if n != 1 else ""}, used left to right in the numbered order.'
-    text = f'**In use:** {source_captions[active_source_index()]}'
-    if n > 1:
-        text += f' · {n} sources (click one to use it)'
-    more = len(same_person_photos()) - 1
-    if more > 0:
-        text += (f'\n\n{more} more photo{"s" if more != 1 else ""} of this person. *Combine photos of this person* '
-                 'makes them one faceset (one identity); kept separate, only the source in use counts.')
-    return text
+    if n < 2 or MODES[values['mode']] == 'all_input':
+        return ''                      # nothing, one source, or the numbered captions say it
+    return f'**In use:** {source_captions[active_source_index()]} · {active_source_index() + 1} of {n}'
+
+
+def combine_label():
+    """The Combine button's text: how many photos it would blend."""
+    k = len(same_person_photos())
+    return f'Combine {k} photos into one source' if k >= 2 else 'Combine photos into one source'
 
 
 def same_person_photos():
@@ -392,7 +380,7 @@ def add_sources(paths, progress=None):
         elif util.has_image_extension(path):
             found = extract_face_images(path, (False, 0))
             if not found:
-                messages.append(f'{name}: no face found, not added')
+                messages.append(f'{name}: no face found, not added (try a lower Detection confidence)')
                 continue
             image = get_image_frame(path)
             for i, (face, crop) in enumerate(found):
@@ -502,7 +490,7 @@ def remove_active_source():
         return False
     i = active_source_index()
     in_use = G.INPUT_FACESETS[i]
-    _source_undo.append(('remove source', _take_sources([i]), None, in_use))
+    _source_undo.append(('remove', _take_sources([i]), None, in_use))
     active_source = min(i, len(G.INPUT_FACESETS) - 1) if G.INPUT_FACESETS else 0
     return True
 
@@ -513,7 +501,7 @@ def clear_sources():
     if not G.INPUT_FACESETS:
         return False
     in_use = G.INPUT_FACESETS[active_source_index()]
-    _source_undo.append(('remove all sources', _take_sources(range(len(G.INPUT_FACESETS))), None, in_use))
+    _source_undo.append(('remove all', _take_sources(range(len(G.INPUT_FACESETS))), None, in_use))
     active_source = 0
     return True
 
@@ -708,22 +696,12 @@ def targets_gallery():
 def _target_caption(t):
     parts = [t['name']]
     if t['kind'] != 'image':
-        parts.append(timecode(t['frames'], t['fps'], short=True))
+        parts.append(duration(t['frames'], t['fps']))
         if (t['start'], t['end']) != (1, t['frames']):
             parts.append(f"{t['start']}–{t['end']}")
     if t['mask'] is not None:
-        parts.append('mask')
+        parts.append('painted')
     return ' · '.join(parts)
-
-
-def target_info():
-    t = target()
-    if not targets:
-        return 'No target yet: drop the images or videos to swap faces in.'
-    text = f"**Showing:** {t['name']}" if t else ''
-    if len(targets) > 1:
-        text += f' · {len(targets)} files, all rendered with the settings on the right'
-    return text
 
 
 def selected_target_index():
@@ -741,7 +719,7 @@ def remove_selected_target():
     i = selected_target_index()
     if i is None:
         return False
-    _removed_targets.append(('remove file', [(i, targets.pop(i))]))
+    _removed_targets.append(('remove', [(i, targets.pop(i))]))
     selected_target = targets[min(i, len(targets) - 1)]['id'] if targets else None
     return True
 
@@ -749,7 +727,7 @@ def remove_selected_target():
 def clear_targets(undoable=True):
     global selected_target
     if targets and undoable:
-        _removed_targets.append(('remove all files', list(enumerate(targets))))
+        _removed_targets.append(('remove all', list(enumerate(targets))))
     targets.clear()
     selected_target = None
 
@@ -771,16 +749,25 @@ def undo_label():
     return f'Undo {_removed_targets[-1][0]}' if _removed_targets else None
 
 
-def timecode(frame, fps, short=False):
-    """Time at the start of frame `frame` (1-based); short: the duration of `frame` frames."""
+def clock(frame, fps):
+    """Start time of frame `frame` (1-based), short: 0:01.25 / 1:02:03.50."""
     if not fps:
         return ''
-    secs = max(0.0, (frame if short else frame - 1) / fps)
-    m, s = divmod(secs, 60)
-    h, m = divmod(int(m), 60)
-    if short:
-        return f'{h}:{m:02d}:{int(s):02d}' if h else f'{m}:{int(s):02d}'
-    return f'{h:02d}:{m:02d}:{s:06.3f}'
+    cs = int(round(max(0.0, (frame - 1) / fps) * 100))         # centiseconds: 59.995 s is 1:00.00, not 0:60.00
+    h, rest = divmod(cs, 360000)
+    m, rest = divmod(rest, 6000)
+    sec = f'{rest // 100:02d}.{rest % 100:02d}'
+    return f'{h}:{m:02d}:{sec}' if h else f'{m}:{sec}'
+
+
+def duration(frames, fps):
+    """Length of `frames` frames: 0:07 / 1:02:03."""
+    if not fps:
+        return ''
+    secs = int(round(frames / fps))
+    m, sec = divmod(secs, 60)
+    h, m = divmod(m, 60)
+    return f'{h}:{m:02d}:{sec:02d}' if h else f'{m}:{sec:02d}'
 
 
 def set_range(which, frame):
@@ -814,10 +801,12 @@ def range_text():
     if t is None or t['kind'] == 'image':
         return ''
     whole = (t['start'], t['end']) == (1, t['frames'])
-    what = 'Whole video' if whole else 'Part of the video'
     n = t['end'] - t['start'] + 1
-    return (f"**{what}:** frames {t['start']}–{t['end']} of {t['frames']} · "
-            f"{timecode(t['start'], t['fps'])} – {timecode(t['end'] + 1, t['fps'])} ({n} frames)")
+    if whole:
+        length = clock(t['frames'] + 1, t['fps'])
+        return f"Render: whole video · {t['frames']} frames" + (f" · {length}" if length else '')
+    span = f"{clock(t['start'], t['fps'])}–{clock(t['end'] + 1, t['fps'])}" if t['fps'] else ''
+    return f"**Render {t['start']}–{t['end']}** · {n} frames" + (f" · {span}" if span else '')
 
 
 def set_out_fps(value):
@@ -940,9 +929,10 @@ def mask_info():
     if t is None:
         return ''
     if t['mask'] is None:
-        return 'No painted areas on this file.'
-    where = f" (painted on frame {t['mask_frame']})" if t['kind'] != 'image' else ''
-    return f'**Painted keep-original areas on {t["name"]}**{where}: they stay original in every frame of this file.'
+        return ''
+    if t['kind'] == 'image':
+        return 'Painted areas stay original'
+    return f"Painted on frame {t['mask_frame']} · used on every frame"
 
 
 # ----------------------------------------------------------------------------- run checks
@@ -959,7 +949,7 @@ def readiness():
         problems.append('add a target file')
     mode = values['mode']
     if MODES[mode] == 'selected' and not G.TARGET_FACES:
-        problems.append('click the people to replace in the preview')
+        problems.append('click faces in the preview')
     if problems:
         return False, 'To start: ' + ', '.join(problems) + '.'
     images = [t for t in targets if t['kind'] == 'image']
@@ -970,7 +960,7 @@ def readiness():
     if videos:
         frames = sum(t['end'] - t['start'] + 1 for t in videos)
         secs = sum((t['end'] - t['start'] + 1) / t['fps'] for t in videos if t['fps'])
-        length = f'{secs:.1f} s' if secs < 10 else timecode(int(round(secs)), 1.0, short=True)
+        length = f'{secs:.1f} s' if secs < 10 else duration(secs, 1.0)
         parts.append(f"{len(videos)} video{'s' if len(videos) != 1 else ''} ({frames} frames, {length})")
     who = mode
     if MODES[mode] == 'all_input':
@@ -990,18 +980,21 @@ def run_warnings():
     v = values
     w = []
     if v['enhancer'] != 'None' and int(str(v['resolution'])[:-2]) > 512:
-        w.append('With an enhancer, swap resolution above 512px only costs time (enhancers work at 512).')
+        w.append('The enhancer works at 512px: a higher resolution only costs time.')
     if NO_FACE[v['no_face']] == 2 and v['method'] == METHOD_MEMORY and any(t['kind'] != 'image' for t in targets):
-        w.append('"Drop the frame": videos get shorter and the sound drifts where frames are dropped.')
+        w.append('"Drop the frame": the video gets shorter and the sound drifts.')
     if MODES[v['mode']] == 'all_input' and len(G.INPUT_FACESETS) < 2:
         w.append('"One source per face" with one source: only the leftmost face is swapped.')
     if v['er'] and ((v['keep_mouth'] and v['er_mouth']) or (v['keep_eyes'] and v['er_eyes'])):
-        w.append("The target's own mouth / eyes replace what the expression restorer made there.")
+        w.append("Pasted-back mouth / eyes override the restored expression there.")
     names = [os.path.splitext(t['name'])[0] for t in targets]
     if len(names) != len(set(names)):
-        w.append('Some targets have the same file name: their results get _2, _3 ... added.')
+        w.append('Same file names: results get _2, _3 …')
     if G.CFG.clear_output:
-        w.append('"Clear output folder before each run" is on (Settings): earlier results there will be deleted.')
+        w.append('The output folder is emptied at Start (Settings).')
+    plugin, warn = mask_plugin()
+    if warn:
+        w.append(warn)
     return w
 
 

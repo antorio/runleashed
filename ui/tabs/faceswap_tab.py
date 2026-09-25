@@ -1,10 +1,11 @@
 """Face Swap tab: layout and wiring. The state and logic live in
 ui/tabs/faceswap_state.py (S).
 
-Layout, left to right in the order you work:
-  1 Source faces · 2 Target files · 3 Faces to replace  |  run bar, preview,
-  frame range, results  |  settings in accordions (Swap, Expression,
-  Occlusion, Enhance, Detection & tracking, Video output).
+Layout, left to right in the order you work (compact for a 1920x1080 screen):
+  1 Source faces · 2 Target files · 3 Faces to replace  |  preview on top,
+  then frame (◀ ▶, arrow keys) · range · view · Ready + Start / Stop · status ·
+  results  |  settings in accordions (Swap, Expression, Occlusion, Enhance,
+  Detection & tracking, Video output).
 
 How the preview follows the settings: every setting's .change bumps a hidden
 counter in the browser (js only, no server call); the counter's .change runs
@@ -138,6 +139,7 @@ def faceswap_tab():
     S.load_saved_defaults()
     V = S.values
     video = (S.target() or {}).get('kind') in ('video', 'gif')
+    t = S.target()
 
     with gr.Tab("Face Swap"):
         tick = gr.Number(value=0, visible=False)
@@ -148,199 +150,192 @@ def faceswap_tab():
             with gr.Column(scale=3, min_width=280, elem_id="fs_left"):
                 gr.Markdown("### 1 · Source faces", elem_classes="fs-step")
                 C['src_gal'] = gr.Gallery(value=S.sources_gallery(), show_label=False, columns=3, allow_preview=False, preview=False,
-                                          interactive=False, object_fit="cover", height="190px", elem_id="src_gal")
-                C['src_info'] = gr.Markdown(S.source_info())
-                with gr.Row():
-                    C['btn_src_remove'] = gr.Button("Remove this source", size="sm", min_width=80)
-                    C['btn_src_clear'] = gr.Button("Remove all", size="sm", min_width=80)
+                                          interactive=False, object_fit="cover", height="150px", elem_id="src_gal")
+                C['src_info'] = gr.Markdown(S.source_info(), visible=bool(S.source_info()), elem_classes="fs-line")
+                have_src = bool(G.INPUT_FACESETS)
+                with gr.Row(elem_classes="fs-buttons"):
+                    C['btn_src_remove'] = gr.Button("Remove this source", size="sm", min_width=80, interactive=have_src)
+                    C['btn_src_clear'] = gr.Button("Remove all", size="sm", min_width=80, interactive=have_src)
                     C['btn_src_undo'] = gr.Button(S.source_undo_label() or "Undo", size="sm", min_width=80,
                                                   interactive=S.source_undo_label() is not None)
-                with gr.Row():
-                    C['btn_src_combine'] = gr.Button("Combine photos of this person", size="sm", visible=len(S.same_person_photos()) >= 2)
+                with gr.Row(elem_classes="fs-buttons"):
+                    C['btn_src_combine'] = gr.Button(S.combine_label(), size="sm", visible=len(S.same_person_photos()) >= 2)
                     C['btn_src_shuffle'] = gr.Button("Shuffle order", size="sm",
                                                      visible=S.MODES[V['mode']] == 'all_input' and len(G.INPUT_FACESETS) > 1)
-                C['src_drop'] = gr.Files(label="Add photos or a faceset (.fsz)", file_count="multiple", file_types=None, elem_id="src_drop")
-                with gr.Row(equal_height=True):
+                C['src_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="src_drop")
+                with gr.Row(equal_height=True, elem_classes="fs-path"):
                     C['src_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                               placeholder="or a path: a .fsz, a photo or a folder")
+                                               placeholder="or a path: .fsz, photo or folder (Enter)")
                     C['btn_src_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
                 gr.Markdown("### 2 · Target files", elem_classes="fs-step")
                 C['tgt_gal'] = gr.Gallery(value=S.targets_gallery(), show_label=False, columns=3, allow_preview=False, preview=False,
-                                          interactive=False, object_fit="contain", height="190px", elem_id="tgt_gal")
-                C['tgt_info'] = gr.Markdown(S.target_info())
-                with gr.Row():
-                    C['btn_tgt_remove'] = gr.Button("Remove this file", size="sm", min_width=80)
-                    C['btn_tgt_clear'] = gr.Button("Remove all", size="sm", min_width=80)
+                                          interactive=False, object_fit="contain", height="150px", elem_id="tgt_gal")
+                have_tgt = bool(S.targets)
+                with gr.Row(elem_classes="fs-buttons"):
+                    C['btn_tgt_remove'] = gr.Button("Remove this file", size="sm", min_width=80, interactive=have_tgt)
+                    C['btn_tgt_clear'] = gr.Button("Remove all", size="sm", min_width=80, interactive=have_tgt)
                     C['btn_tgt_undo'] = gr.Button(S.undo_label() or "Undo", size="sm", min_width=80, interactive=S.undo_label() is not None)
-                C['tgt_drop'] = gr.Files(label="Add images or videos", file_count="multiple", file_types=None, elem_id="tgt_drop")
-                with gr.Row(equal_height=True):
+                C['tgt_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="tgt_drop")
+                with gr.Row(equal_height=True, elem_classes="fs-path"):
                     C['tgt_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                               placeholder="or a path: a file or a folder")
+                                               placeholder="or a path: file or folder (Enter)")
                     C['btn_tgt_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
                 gr.Markdown("### 3 · Faces to replace", elem_classes="fs-step")
-                mode = _s('mode', gr.Radio(list(S.MODES), value=V['mode'], show_label=False, elem_id="mode_radio"))
-                C['mode_info'] = gr.Markdown(S.MODE_INFO[V['mode']], elem_classes="fs-hint")
-                with gr.Column(visible=S.MODES[V['mode']] == 'selected') as people_col:
+                mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
+                                              elem_id="mode_dd"))
+                with gr.Column(visible=S.MODES[V['mode']] == 'selected', elem_id="people_col") as people_col:
                     C['people_col'] = people_col
-                    gr.Markdown("**Click a face in the preview** to add that person (Original or Swapped view). "
-                                "Add the same person from another angle if they are missed.", elem_classes="fs-hint")
+                    C['people_hint'] = gr.Markdown("Click faces in the preview to add them.", visible=not G.TARGET_FACES,
+                                                   elem_classes="fs-line")
                     C['people_gal'] = gr.Gallery(value=S.people_gallery(), show_label=False, columns=4, allow_preview=False,
-                                                 preview=False, interactive=False, object_fit="cover", height="120px",
+                                                 preview=False, interactive=False, object_fit="cover", height="110px",
                                                  elem_id="people_gal")
-                    C['btn_person_remove'] = gr.Button("Remove this person", size="sm")
-                    _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01, label="Match tolerance",
-                                              info="Higher = also swaps faces that look less like the picked people"))
+                    with gr.Row(elem_id="people_tools"):
+                        C['btn_person_remove'] = gr.Button("Remove this person", size="sm", scale=1, min_width=120,
+                                                           interactive=bool(G.TARGET_FACES))
+                        _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01, scale=2,
+                                                  label="Match tolerance (higher = looser)"))
 
-            # --------------------------------------------------------------- centre: preview & run
+            # --------------------------------------------------------------- centre: preview on top, controls below
             with gr.Column(scale=5, min_width=460, elem_id="center_stage"):
+                C['preview'] = gr.Image(label="Preview", interactive=False, format="jpeg", height="56vh",
+                                        show_download_button=False, show_fullscreen_button=True, elem_id="preview_img")
+                C['result_video'] = gr.Video(label="Result", visible=False, height="56vh", interactive=False)
+                with gr.Column(visible=False) as editor_col:
+                    C['editor_col'] = editor_col
+                    C['editor'] = gr.ImageEditor(type="numpy", sources=(), transforms=(), layers=False, height="56vh",
+                                                 brush=gr.Brush(colors=["#ffffff"], default_color="#ffffff", color_mode="fixed", default_size=40),
+                                                 eraser=gr.Eraser(default_size=40), show_download_button=False,
+                                                 label="Paint in white what stays original (all frames), then Done",
+                                                 elem_id="mask_editor")
+                    with gr.Row(elem_classes="fs-buttons"):
+                        C['btn_paint_done'] = gr.Button("Done", variant="primary", size="sm")
+                        C['btn_paint_clear'] = gr.Button("Clear", size="sm")
+                        C['btn_paint_cancel'] = gr.Button("Cancel", size="sm")
+                # the timeline right under the picture, like a player
+                with gr.Row(equal_height=True, visible=video, elem_id="frame_bar") as frame_row:
+                    C['frame_row'] = frame_row
+                    C['btn_prev'] = gr.Button("◀", size="sm", scale=0, min_width=40, elem_id="frame_prev")
+                    C['frame'] = gr.Slider(1, max(2, (t or {}).get('frames', 2)), value=1, step=1, label="Frame  (← → keys)",
+                                           scale=6, elem_id="frame_slider")
+                    C['btn_next'] = gr.Button("▶", size="sm", scale=0, min_width=40, elem_id="frame_next")
+                with gr.Row(equal_height=True, visible=video, elem_id="range_bar") as range_row:
+                    C['range_row'] = range_row
+                    C['btn_start_here'] = gr.Button("From here", size="sm", scale=0, min_width=90)
+                    C['btn_end_here'] = gr.Button("To here", size="sm", scale=0, min_width=80)
+                    C['btn_whole'] = gr.Button("Whole video", size="sm", scale=0, min_width=100)
+                    C['range_md'] = gr.Markdown(S.range_text(), elem_classes="fs-line", elem_id="range_line")
+                with gr.Row(equal_height=True, elem_id="view_bar") as view_bar:
+                    C['view_bar'] = view_bar
+                    C['view'] = gr.Radio(S.VIEWS, value="Swapped", show_label=False, container=False, scale=6, elem_id="view_radio")
+                    C['auto'] = gr.Checkbox(value=True, label="Auto-update", container=False, scale=0, min_width=120)
+                    C['btn_refresh'] = gr.Button("Refresh", size="sm", scale=0, min_width=80)
                 with gr.Row(equal_height=True, elem_id="run_bar"):
                     C['ready_md'] = gr.Markdown(S.readiness()[1], elem_id="ready_line")
-                    C['btn_start'] = gr.Button("▶ Start", variant="primary", scale=0, min_width=110,
-                                               interactive=not S.run_lock.locked())
+                    C['btn_start'] = gr.Button("▶ Start", variant="primary", scale=0, min_width=120)
                     C['btn_stop'] = gr.Button("⏹ Stop", variant="secondary", scale=0, min_width=90,
                                               interactive=S.run_lock.locked())
                 C['status_md'] = gr.Markdown("", elem_id="status_line")
-                with gr.Row(equal_height=True):
-                    C['view'] = gr.Radio(S.VIEWS, value="Swapped", show_label=False, container=False, scale=5, elem_id="view_radio")
-                    C['auto'] = gr.Checkbox(value=True, label="Auto-update", container=False, scale=1, min_width=120)
-                    C['btn_refresh'] = gr.Button("Refresh", size="sm", scale=0, min_width=80)
-                C['preview'] = gr.Image(label="Preview", interactive=False, format="jpeg", height="46vh",
-                                        show_download_button=False, show_fullscreen_button=True, elem_id="preview_img")
-                C['result_video'] = gr.Video(label="Result", visible=False, height="46vh", interactive=False)
-                with gr.Column(visible=False) as editor_col:
-                    C['editor_col'] = editor_col
-                    C['editor'] = gr.ImageEditor(type="numpy", sources=(), transforms=(), layers=False, height="46vh",
-                                                 brush=gr.Brush(colors=["#ffffff"], default_color="#ffffff", color_mode="fixed", default_size=40),
-                                                 eraser=gr.Eraser(default_size=40), show_download_button=False,
-                                                 label="Paint the areas that keep the original (white)", elem_id="mask_editor")
-                    with gr.Row():
-                        C['btn_paint_done'] = gr.Button("Done", variant="primary", size="sm")
-                        C['btn_paint_clear'] = gr.Button("Clear painting", size="sm")
-                        C['btn_paint_cancel'] = gr.Button("Cancel", size="sm")
-                t = S.target()
-                with gr.Row(equal_height=True, visible=video) as frame_row:
-                    C['frame_row'] = frame_row
-                    C['btn_prev'] = gr.Button("◀", size="sm", scale=0, min_width=44)
-                    C['frame'] = gr.Slider(1, max(2, (t or {}).get('frames', 2)), value=1, step=1, label="Frame", scale=8,
-                                           elem_id="frame_slider")
-                    C['btn_next'] = gr.Button("▶", size="sm", scale=0, min_width=44)
-                with gr.Row(visible=video) as range_row:
-                    C['range_row'] = range_row
-                    C['btn_start_here'] = gr.Button("Start here", size="sm")
-                    C['btn_end_here'] = gr.Button("End here", size="sm")
-                    C['btn_whole'] = gr.Button("Whole video", size="sm")
-                C['range_md'] = gr.Markdown(S.range_text())
                 C['results'] = gr.Files(label="Results of the last run", interactive=False, visible=False, elem_id="results")
 
             # --------------------------------------------------------------- right: settings
             with gr.Column(scale=3, min_width=300, elem_id="fs_settings"):
-                with gr.Row():
-                    C['btn_save_def'] = gr.Button("Save as my defaults", size="sm", min_width=90)
-                    C['btn_load_def'] = gr.Button("My defaults", size="sm", min_width=90, interactive=S.has_saved_defaults())
+                with gr.Row(elem_classes="fs-buttons"):
+                    C['btn_save_def'] = gr.Button("Save my defaults", size="sm", min_width=90)
+                    C['btn_load_def'] = gr.Button("Load my defaults", size="sm", min_width=90, interactive=S.has_saved_defaults())
                     C['btn_reset_def'] = gr.Button("Factory defaults", size="sm", min_width=90)
 
                 with gr.Accordion(f"Swap · {S.summary('swap')}", open=True) as acc_swap:
-                    _s('resolution', gr.Dropdown(S.RESOLUTIONS, value=V['resolution'], label="Swap resolution",
-                                                 info="Higher = sharper and slower; above 512px is wasted with an enhancer"))
-                    _s('identity', gr.Slider(0.0, 1.0, value=V['identity'], step=0.05, label="Identity strength",
-                                             info="Pushes the source identity away from the target's. 0 = off"))
-                    _s('face_shape', gr.Slider(0.0, 1.0, value=V['face_shape'], step=0.05, label="Face shape from source (jaw / chin)",
-                                               info="Moves the target's jaw and chin to the source's shape. 0 = off"))
-                    _s('passes', gr.Slider(1, 5, value=V['passes'], step=1, label="Swap passes",
-                                           info="Repeats the swap; the face may look smaller with each pass"))
+                    with gr.Row():
+                        _s('resolution', gr.Dropdown(S.RESOLUTIONS, value=V['resolution'], label="Resolution"))
+                        _s('passes', gr.Slider(1, 5, value=V['passes'], step=1, label="Passes (1 = normal)"))
+                    with gr.Row():
+                        _s('identity', gr.Slider(0.0, 1.0, value=V['identity'], step=0.05, label="Identity boost (0 = off)"))
+                        _s('face_shape', gr.Slider(0.0, 1.0, value=V['face_shape'], step=0.05, label="Source jaw / chin shape (0 = off)"))
 
                 with gr.Accordion(f"Expression · {S.summary('expression')}", open=True) as acc_expr:
-                    er = _s('er', gr.Checkbox(value=V['er'], label="Restore the target's expression (LivePortrait)"))
+                    er = _s('er', gr.Checkbox(value=V['er'], label="Restore target expression (LivePortrait)"))
                     with gr.Column(visible=V['er']) as er_col:
-                        _s('er_strength', gr.Slider(0, 500, value=V['er_strength'], step=1, label="Strength",
-                                                    info="100 = the target's expression; more exaggerates it"))
+                        _s('er_strength', gr.Slider(0, 500, value=V['er_strength'], step=1, label="Strength (100 = as the target)"))
                         with gr.Row(elem_id="expr_checks"):
                             _s('er_eyes', gr.Checkbox(value=V['er_eyes'], label="Eyes / blink"))
                             _s('er_mouth', gr.Checkbox(value=V['er_mouth'], label="Mouth"))
                             _s('er_brows', gr.Checkbox(value=V['er_brows'], label="Brows"))
                         with gr.Accordion("Fine-tune", open=False):
-                            _s('er_smoothing', gr.Slider(0.0, 1.0, value=V['er_smoothing'], step=0.05, label="Smoothing (video)",
-                                                         info="Calms expression flicker; experimental"))
-                            _s('er_pose_lock', gr.Checkbox(value=V['er_pose_lock'], label="Pose lock", info="Keeps the head from drifting"))
+                            _s('er_smoothing', gr.Slider(0.0, 1.0, value=V['er_smoothing'], step=0.05, label="Expression smoothing (video)"))
+                            _s('er_pose_lock', gr.Checkbox(value=V['er_pose_lock'], label="Pose lock (no head drift)"))
                             _s('er_pose_gate', gr.Checkbox(value=V['er_pose_gate'], label="Skip at extreme head angles"))
-                            _s('er_structure', gr.Checkbox(value=V['er_structure'], label="Keep the source face structure",
-                                                           info="Only the expression moves; the face shape stays from the swap"))
-                    _s('keep_mouth', gr.Checkbox(value=V['keep_mouth'], label="Keep the target's own mouth",
-                                                 info="Pastes the target's real mouth back over the swap (teeth, lip sync)"))
-                    _s('keep_eyes', gr.Checkbox(value=V['keep_eyes'], label="Keep the target's own eyes",
-                                                info="Pastes the target's real eyes back (gaze, blinks)"))
+                            _s('er_structure', gr.Checkbox(value=V['er_structure'], label="Expression only (keep the swapped face shape)"))
+                    with gr.Row(elem_classes="fs-checks"):
+                        _s('keep_mouth', gr.Checkbox(value=V['keep_mouth'], label="Paste back target's mouth"))
+                        _s('keep_eyes', gr.Checkbox(value=V['keep_eyes'], label="Paste back target's eyes"))
 
-                with gr.Accordion(f"Occlusion · {S.summary('occlusion')}", open=True) as acc_occ:
-                    engine = _s('mask_engine', gr.Dropdown(list(S.MASK_ENGINES), value=V['mask_engine'], label="Occlusion mask",
-                                                           info="Keeps hands, hair, glasses ... in front of the face original. See it: view Mask"))
+                with gr.Accordion(f"Occlusion · {S.summary('occlusion')}", open=False) as acc_occ:
+                    engine = _s('mask_engine', gr.Dropdown(list(S.MASK_ENGINES), value=V['mask_engine'],
+                                                           label="Mask model (hands, hair … stay original)"))
                     with gr.Column(visible=V['mask_engine'] == 'Clip2Seg (by text)') as clip_col:
-                        _s('mask_objects', gr.Textbox(value=V['mask_objects'], label="Objects to keep",
-                                                      info="Comma separated, e.g. hands, hair, cup (needs PyTorch)"))
-                    C['paint_md'] = gr.Markdown(S.mask_info(), elem_classes="fs-hint")
-                    with gr.Row():
-                        C['btn_paint'] = gr.Button("Paint areas that keep the original", size="sm")
+                        _s('mask_objects', gr.Textbox(value=V['mask_objects'], label="Objects to keep (comma separated)",
+                                                      max_lines=1))
+                    C['paint_md'] = gr.Markdown(S.mask_info(), visible=bool(S.mask_info()), elem_classes="fs-line")
+                    with gr.Row(elem_classes="fs-buttons"):
+                        C['btn_paint'] = gr.Button("Paint areas that stay original", size="sm")
                         C['btn_paint_remove'] = gr.Button("Remove painting", size="sm",
-                                                          interactive=(S.target() or {}).get('mask') is not None)
+                                                          interactive=(t or {}).get('mask') is not None)
                     with gr.Accordion("Edges & blending", open=False):
-                        _s('erosion', gr.Slider(1, 3, value=V['erosion'], step=1, label="Edge erosion", info="Shrinks the swapped area"))
-                        _s('blur', gr.Slider(4, 100, value=V['blur'], step=1, label="Edge blur"))
-                        _s('to_chin', gr.Checkbox(value=V['to_chin'], label="Extend the swap to the chin"))
-                        _s('aligned_edges', gr.Checkbox(value=V['aligned_edges'], label="Face-aligned edges",
-                                                        info="Tilted faces get the same edges as upright ones"))
+                        with gr.Row():
+                            _s('erosion', gr.Slider(1, 3, value=V['erosion'], step=1, label="Edge erosion"))
+                            _s('blur', gr.Slider(4, 100, value=V['blur'], step=1, label="Edge blur"))
+                        _s('to_chin', gr.Checkbox(value=V['to_chin'], label="Extend swap to chin"))
+                        _s('aligned_edges', gr.Checkbox(value=V['aligned_edges'], label="Face-aligned edges (tilted faces)"))
                         with gr.Row():
                             _s('crop_top', gr.Slider(0.0, 0.99, value=V['crop_top'], step=0.01, label="Crop top"))
                             _s('crop_bottom', gr.Slider(0.0, 0.99, value=V['crop_bottom'], step=0.01, label="Crop bottom"))
                         with gr.Row():
                             _s('crop_left', gr.Slider(0.0, 0.99, value=V['crop_left'], step=0.01, label="Crop left"))
                             _s('crop_right', gr.Slider(0.0, 0.99, value=V['crop_right'], step=0.01, label="Crop right"))
-                        _s('color_transfer', gr.Checkbox(value=V['color_transfer'], label="Match colours to the target"))
+                        _s('color_transfer', gr.Checkbox(value=V['color_transfer'], label="Match colours to target"))
 
                 with gr.Accordion(f"Enhance · {S.summary('enhance')}", open=False) as acc_enh:
-                    enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Face enhancer"))
+                    enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Enhancer"))
                     with gr.Column(visible=V['enhancer'] != 'None') as enh_col:
-                        _s('enhancer_blend', gr.Slider(0.0, 1.0, value=V['enhancer_blend'], step=0.01, label="Enhancer strength",
-                                                       info="0 = not enhanced, 1 = fully enhanced"))
-                        _s('mask_after_enhancer', gr.Checkbox(value=V['mask_after_enhancer'], label="Occlusion mask after the enhancer",
-                                                              info="Keeps occluders out of the enhancer"))
+                        _s('enhancer_blend', gr.Slider(0.0, 1.0, value=V['enhancer_blend'], step=0.01, label="Strength"))
+                        _s('mask_after_enhancer', gr.Checkbox(value=V['mask_after_enhancer'], label="Occlusion mask after enhancer"))
 
                 with gr.Accordion(f"Detection & tracking · {S.summary('detection')}", open=False) as acc_det:
-                    _s('det_thresh', gr.Slider(0.10, 0.90, value=V['det_thresh'], step=0.01, label="Detection confidence",
-                                               info="Also used when loading sources and in Face Management"))
-                    _s('det_size', gr.Dropdown([320, 640, 1024], value=V['det_size'], label="Detection size"))
-                    _s('multi_angle', gr.Dropdown(list(S.MULTI_ANGLE), value=V['multi_angle'], label="Rotated faces",
-                                                  info="Finds sideways or upside-down faces"))
-                    _s('autorotate', gr.Checkbox(value=V['autorotate'], label="Auto-rotate lying faces",
-                                                 info="Re-detects horizontal faces upright (skips smoothing and face shape)"))
-                    lmk = _s('lmk_align', gr.Checkbox(value=V['lmk_align'], label="68-point alignment", info="Off = the detector's 5 points"))
+                    with gr.Row():
+                        _s('det_thresh', gr.Slider(0.10, 0.90, value=V['det_thresh'], step=0.01, label="Detection confidence"))
+                        _s('det_size', gr.Dropdown([320, 640, 1024], value=V['det_size'], label="Detection size"))
+                    C['multi_angle'] = _s('multi_angle', gr.Dropdown(list(S.MULTI_ANGLE), value=V['multi_angle'], label="Rotated faces"))
+                    with gr.Column(visible=S.MULTI_ANGLE[V['multi_angle']] == 'always') as upright_col:
+                        C['upright_col'] = upright_col
+                        _s('upright', gr.Slider(0.0, 1.0, value=V['upright'], step=0.05, label="Upright priority"))
+                    _s('autorotate', gr.Checkbox(value=V['autorotate'], label="Auto-rotate lying faces"))
+                    lmk = _s('lmk_align', gr.Checkbox(value=V['lmk_align'], label="68-point alignment"))
                     with gr.Column(visible=V['lmk_align']) as lmk_col:
                         _s('hi_lmk', gr.Checkbox(value=V['hi_lmk'], label="High-accuracy landmarks (2dfan4)"))
-                        _s('lmk_gate', gr.Checkbox(value=V['lmk_gate'], label="Landmark sanity gate",
-                                                   info="Falls back to 5 points when the 68 look broken; can flicker"))
-                    sm = _s('smoothing', gr.Checkbox(value=V['smoothing'], label="Landmark smoothing (video)",
-                                                     info="Reduces jitter; in-memory video only"))
+                        C['lmk_gate'] = _s('lmk_gate', gr.Checkbox(value=V['lmk_gate'], label="Landmark sanity gate"))
+                        with gr.Column(visible=V['lmk_gate']) as gate_col:
+                            C['gate_col'] = gate_col
+                            _s('lmk_gate_thr', gr.Slider(0.0, 0.50, value=V['lmk_gate_thr'], step=0.005, label="Gate threshold"))
+                    sm = _s('smoothing', gr.Checkbox(value=V['smoothing'], label="Landmark smoothing (video)"))
                     with gr.Column(visible=V['smoothing']) as sm_col:
-                        _s('smoothing_strength', gr.Slider(0.0, 1.0, value=V['smoothing_strength'], step=0.05, label="Smoothing strength"))
-                    with gr.Accordion("Expert", open=False):
-                        _s('upright', gr.Slider(0.0, 1.0, value=V['upright'], step=0.05, label="Upright priority",
-                                                info="Only with Rotated faces = Always"))
-                        _s('lmk_gate_thr', gr.Slider(0.0, 0.50, value=V['lmk_gate_thr'], step=0.005, label="Sanity gate threshold",
-                                                     info="Share of the face size; lower = falls back more often"))
-                        _s('smoothing_deadzone', gr.Slider(0.0, 0.03, value=V['smoothing_deadzone'], step=0.001, label="Still-face threshold",
-                                                           info="Movement below this is treated as noise. 0 = off"))
+                        with gr.Row():
+                            _s('smoothing_strength', gr.Slider(0.0, 1.0, value=V['smoothing_strength'], step=0.05, label="Strength"))
+                            _s('smoothing_deadzone', gr.Slider(0.0, 0.03, value=V['smoothing_deadzone'], step=0.001,
+                                                               label="Still-face threshold (0 = off)"))
 
                 with gr.Accordion(f"Video output · {S.summary('video')}", open=False) as acc_vid:
-                    method = _s('method', gr.Radio([S.METHOD_MEMORY, S.METHOD_EXTRACT], value=V['method'], label="Processing",
-                                                   info="Extract frames has no landmark smoothing or face tracking"))
+                    method = _s('method', gr.Radio([(S.METHOD_MEMORY, S.METHOD_MEMORY),
+                                                    (f"{S.METHOD_EXTRACT} (no smoothing)", S.METHOD_EXTRACT)],
+                                                   value=V['method'], label="Processing"))
                     with gr.Column(visible=V['method'] == S.METHOD_EXTRACT) as keep_col:
-                        _s('keep_frames', gr.Checkbox(value=V['keep_frames'], label="Keep the extracted frames",
-                                                      info="In the temp folder, which is emptied at every start"))
-                    _s('no_face', gr.Radio(list(S.NO_FACE), value=V['no_face'], label="When no face gets swapped in a frame"))
+                        _s('keep_frames', gr.Checkbox(value=V['keep_frames'], label="Keep extracted frames (until the next start)"))
+                    _s('no_face', gr.Dropdown(list(S.NO_FACE), value=V['no_face'], label="When no face gets swapped in a frame"))
                     _s('skip_audio', gr.Checkbox(value=V['skip_audio'], label="No audio"))
-                    C['out_fps'] = gr.Number(value=(t or {}).get('out_fps', 0), label="Output frame rate of the selected video",
-                                             info="0 = same as the source; otherwise frames are dropped or repeated", precision=2,
-                                             minimum=0, visible=video)
+                    C['out_fps'] = gr.Number(value=(t or {}).get('out_fps', 0), label="Output fps, this video (0 = original)",
+                                             precision=2, minimum=0, visible=video)
 
         C.update(acc_swap=acc_swap, acc_expr=acc_expr, acc_occ=acc_occ, acc_enh=acc_enh, acc_det=acc_det, acc_vid=acc_vid)
 
@@ -375,6 +370,9 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     lmk.change(None, [lmk], [lmk_col], js=show('v'), **INTERNAL)
     sm.change(None, [sm], [sm_col], js=show('v'), **INTERNAL)
     method.change(None, [method], [keep_col], js=show(f"v === '{S.METHOD_EXTRACT}'"), **INTERNAL)
+    always = next(k for k, v in S.MULTI_ANGLE.items() if v == 'always')
+    C['multi_angle'].change(None, [C['multi_angle']], [C['upright_col']], js=show(f"v === '{always}'"), **INTERNAL)
+    C['lmk_gate'].change(None, [C['lmk_gate']], [C['gate_col']], js=show('v'), **INTERNAL)
 
     # preview
     preview_inputs = set(settings.values()) | {C['view'], C['frame'], C['auto'], tick}
@@ -384,18 +382,20 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
                 concurrency_limit=1, show_progress="hidden", **INTERNAL)
     C['btn_refresh'].click(lambda d: on_preview(d, force=True), preview_inputs, preview_outputs, concurrency_id="fs_preview",
                            concurrency_limit=1, show_progress="hidden", **INTERNAL)
-    C['preview'].select(on_preview_click, [C['frame'], C['view'], tick], [C['people_gal'], C['ready_md'], tick], **one)
+    people_out = [C['people_gal'], C['people_hint'], C['btn_person_remove'], C['ready_md'], tick]
+    C['preview'].select(on_preview_click, [C['frame'], C['view'], tick], people_out, **one)
 
     # sources
     det = [settings['det_thresh'], settings['det_size']]
-    src_out = [C['src_gal'], C['src_info'], C['btn_src_combine'], C['btn_src_shuffle'], C['btn_src_undo'], C['ready_md'], tick]
+    src_out = [C['src_gal'], C['src_info'], C['btn_src_combine'], C['btn_src_shuffle'], C['btn_src_undo'],
+               C['btn_src_remove'], C['btn_src_clear'], C['ready_md'], tick]
     fix_src = dict(fn=src_highlight,
                    inputs=None, outputs=C['src_gal'], show_progress="hidden", **INTERNAL)
     C['src_drop'].upload(on_src_upload, [C['src_drop'], tick] + det, [C['src_drop']] + src_out, **slow).then(**fix_src)
     for ev in (C['btn_src_path'].click, C['src_path'].submit):          # the Add button or Enter
         ev(on_src_path, [C['src_path'], tick] + det, src_out, **slow).then(**fix_src)
     # the mode renumbers the source captions (One source per face): keep the highlight
-    mode.change(on_mode, [mode], [C['people_col'], C['mode_info'], C['src_gal'], C['src_info'], C['btn_src_shuffle'],
+    mode.change(on_mode, [mode], [C['people_col'], C['src_gal'], C['src_info'], C['btn_src_shuffle'],
                                   C['ready_md']], **one).then(**fix_src)
     C['src_gal'].select(on_src_select, [tick], [C['src_info'], C['btn_src_combine'], C['ready_md'], tick], **one)
     C['btn_src_remove'].click(on_src_remove, [tick], src_out, **one).then(**fix_src)
@@ -405,8 +405,9 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['btn_src_shuffle'].click(on_src_shuffle, [tick], src_out, **one).then(**fix_src)
 
     # targets
-    tgt_out = [C['tgt_gal'], C['tgt_info'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
-               C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['ready_md'], tick]
+    tgt_out = [C['tgt_gal'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
+               C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['btn_tgt_remove'], C['btn_tgt_clear'],
+               C['ready_md'], tick]
     fix_tgt = dict(fn=tgt_highlight, inputs=None, outputs=C['tgt_gal'],
                    show_progress="hidden", **INTERNAL)
     C['tgt_drop'].upload(on_tgt_upload, [C['tgt_drop'], tick], [C['tgt_drop']] + tgt_out, **slow).then(**fix_tgt)
@@ -428,11 +429,11 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     fix_people = dict(fn=people_highlight, inputs=None,
                       outputs=C['people_gal'], show_progress="hidden", **INTERNAL)
     C['people_gal'].select(on_person_select, None, None, **one)
-    C['btn_person_remove'].click(on_person_remove, [tick], [C['people_gal'], C['ready_md'], tick], **one).then(**fix_people)
+    C['btn_person_remove'].click(on_person_remove, [tick], people_out, **one).then(**fix_people)
 
     # painted keep-original mask
     paint_out = [C['editor_col'], C['preview'], C['editor'], C['paint_md'], C['btn_paint_remove'], C['tgt_gal'],
-                 C['acc_occ'], tick]
+                 C['acc_occ'], C['view_bar'], C['frame_row'], C['range_row'], tick]
     C['btn_paint'].click(on_paint_open, [C['frame'], tick], paint_out, **one)
     C['btn_paint_done'].click(on_paint_done, [C['editor'], C['frame'], tick], paint_out, **one).then(**fix_tgt)
     C['btn_paint_clear'].click(on_paint_clear, [C['frame'], tick], paint_out, **one)
@@ -450,7 +451,7 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['results'].select(on_result_select, [C['results'], tick], [C['view'], tick], **one)
 
     # defaults
-    C['btn_save_def'].click(on_save_defaults, set(settings.values()), [C['status_md'], C['btn_load_def']], **one)
+    C['btn_save_def'].click(on_save_defaults, set(settings.values()), [C['btn_load_def']], **one)
     keys = list(settings)
     C['btn_load_def'].click(lambda n: on_load_defaults(keys, n), [tick], [settings[k] for k in keys] + [tick], **one)
     C['btn_reset_def'].click(lambda n: on_factory_defaults(keys, n), [tick], [settings[k] for k in keys] + [tick], **one)
@@ -472,8 +473,10 @@ def register_load(ui):
 def refresh_outputs():
     """Components refresh_values() fills (also used by other tabs)."""
     return [C['src_gal'], C['src_info'], C['btn_src_combine'], C['btn_src_shuffle'], C['btn_src_undo'],
-            C['tgt_gal'], C['tgt_info'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
-            C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['people_col'], C['people_gal'], C['mode_info'],
+            C['btn_src_remove'], C['btn_src_clear'],
+            C['tgt_gal'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
+            C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['btn_tgt_remove'], C['btn_tgt_clear'],
+            C['people_col'], C['people_gal'], C['people_hint'], C['btn_person_remove'],
             C['ready_md'], C['btn_start'], C['btn_stop'], C['tick']]
 
 
@@ -482,20 +485,26 @@ def refresh_values():
     # and only the page that pressed Start hears when it ends (a second Start
     # is refused; a Stop with nothing running says so). The preview tick is a
     # new value (milliseconds): the page's own tick counts up by one.
-    return (_src_updates()[:5] + _tgt_updates()[:10] +
-            [gr.Column(visible=S.MODES[S.values['mode']] == 'selected'), _gallery('people', S.people_gallery()),
-             gr.Markdown(S.MODE_INFO[S.values['mode']]), gr.Markdown(S.readiness()[1]),
-             gr.Button(interactive=True), gr.Button(interactive=_rendering()), int(time.time() * 1000)])
+    return (_src_updates()[:7] + _tgt_updates()[:11] +
+            [gr.Column(visible=S.MODES[S.values['mode']] == 'selected')] + _people_updates() +
+            [gr.Markdown(S.readiness()[1]), gr.Button(interactive=True), gr.Button(interactive=_rendering()),
+             int(time.time() * 1000)])
 
 
 # ============================================================================ updates
 
+def _src_info_update():
+    text = S.source_info()
+    return gr.Markdown(value=text, visible=bool(text))
+
+
 def _src_updates():
     n = len(G.INPUT_FACESETS)
-    return [_gallery('src', S.sources_gallery()), gr.Markdown(S.source_info()),
-            gr.Button(visible=len(S.same_person_photos()) >= 2),
+    return [_gallery('src', S.sources_gallery()), _src_info_update(),
+            gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
             gr.Button(visible=S.MODES[S.values['mode']] == 'all_input' and n > 1),
             gr.Button(value=S.source_undo_label() or "Undo", interactive=S.source_undo_label() is not None),
+            gr.Button(interactive=n > 0), gr.Button(interactive=n > 0),
             gr.Markdown(S.readiness()[1])]
 
 
@@ -503,14 +512,20 @@ def _tgt_updates():
     t = S.target()
     video = t is not None and t['kind'] != 'image'
     frames = t['frames'] if video else 2
-    return [_gallery('tgt', S.targets_gallery()), gr.Markdown(S.target_info()),
+    return [_gallery('tgt', S.targets_gallery()),
             gr.Row(visible=video), gr.Row(visible=video),
             gr.Slider(minimum=1, maximum=max(2, frames), value=t['start'] if video else 1),
             gr.Markdown(S.range_text()),
             gr.Number(value=t['out_fps'] if video else 0, visible=video),
-            gr.Markdown(S.mask_info()), _paint_remove_update(),
+            _paint_md_update(), _paint_remove_update(),
             gr.Button(value=S.undo_label() or "Undo", interactive=S.undo_label() is not None),
+            gr.Button(interactive=bool(S.targets)), gr.Button(interactive=bool(S.targets)),
             gr.Markdown(S.readiness()[1])]
+
+
+def _people_updates():
+    have = bool(G.TARGET_FACES)
+    return [_gallery('people', S.people_gallery()), gr.Markdown(visible=not have), gr.Button(interactive=have)]
 
 
 def _messages(messages):
@@ -536,8 +551,8 @@ def _apply_detection(thresh, size):
 def on_mode(mode):
     S.values['mode'] = mode
     n = len(G.INPUT_FACESETS)
-    return [gr.Column(visible=S.MODES[mode] == 'selected'), gr.Markdown(S.MODE_INFO[mode]),
-            _gallery('src', S.sources_gallery()), gr.Markdown(S.source_info()),
+    return [gr.Column(visible=S.MODES[mode] == 'selected'),
+            _gallery('src', S.sources_gallery()), _src_info_update(),
             gr.Button(visible=S.MODES[mode] == 'all_input' and n > 1), gr.Markdown(S.readiness()[1])]
 
 
@@ -558,7 +573,7 @@ def on_src_select(evt: gr.SelectData, tick):
     if evt is None or _is_echo('src', evt.index) or evt.index == S.active_source_index():
         return [gr.skip()] * 4
     S.select_source(evt.index)
-    return [gr.Markdown(S.source_info()), gr.Button(visible=len(S.same_person_photos()) >= 2),
+    return [_src_info_update(), gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
             gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
@@ -569,8 +584,7 @@ def on_src_remove(tick):
 
 
 def on_src_clear(tick):
-    if S.clear_sources():
-        _info('All sources removed. Undo brings them back.')
+    S.clear_sources()
     return _src_updates() + [(tick or 0) + 1]
 
 
@@ -606,7 +620,7 @@ def on_tgt_path(path, tick):
 
 def on_tgt_select(evt: gr.SelectData, tick):
     if evt is None or _is_echo('tgt', evt.index) or evt.index == S.selected_target_index():
-        return [gr.skip()] * 12
+        return [gr.skip()] * 13
     S.select_target(evt.index)
     return _tgt_updates() + [(tick or 0) + 1]
 
@@ -620,7 +634,6 @@ def on_tgt_remove(tick):
 def on_tgt_clear(tick):
     if S.targets:
         S.clear_targets()
-        _info('All target files removed. Undo brings them back.')
     return _tgt_updates() + [(tick or 0) + 1]
 
 
@@ -655,19 +668,19 @@ def on_person_select(evt: gr.SelectData):
 def on_person_remove(tick):
     if not S.remove_selected_person():
         gr.Warning('No person to remove')
-    return [_gallery('people', S.people_gallery()), gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+    return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
 def on_preview_click(evt: gr.SelectData, frame, view, tick):
     if S.MODES[S.values['mode']] != 'selected':
-        return [gr.skip(), gr.skip(), gr.skip()]            # clicking the preview only picks in Specific people
+        return [gr.skip()] * 5                             # clicking the preview only picks in Specific people
     if view not in ('Original', 'Swapped') or not _preview['size'] or evt is None:
         _info('Pick people in the Original or Swapped view')
-        return [gr.skip(), gr.skip(), gr.skip()]
+        return [gr.skip()] * 5
     x, y = evt.index[0], evt.index[1]
     msg = S.pick_person_at(frame, x, y, _preview['size'])
     (_info if msg == 'Person added' else gr.Warning)(msg)
-    return [_gallery('people', S.people_gallery()), gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+    return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
 # ============================================================================ handlers: painted mask
@@ -689,14 +702,25 @@ def _editor_background(frame_num, tid=None):
     return None if frame is None else util.convert_to_gradio_preview(frame)
 
 
+def _paint_md_update():
+    text = S.mask_info()
+    return gr.Markdown(value=text, visible=bool(text))
+
+
 def _paint_remove_update():
     return gr.Button(interactive=(S.target() or {}).get('mask') is not None)
 
 
 def _paint_view(open_editor, editor_value=gr.skip()):
+    """The editor in the preview's place; view, frame and range controls do
+    nothing for it, so they hide until Done / Cancel."""
+    t = S.target()
+    video = t is not None and t['kind'] != 'image'
     return [gr.Column(visible=open_editor), gr.Image(visible=not open_editor), editor_value,
-            gr.Markdown(S.mask_info()), _paint_remove_update(), _gallery('tgt', S.targets_gallery()),
-            gr.Accordion(label=f"Occlusion · {S.summary('occlusion')}")]
+            _paint_md_update(), _paint_remove_update(), _gallery('tgt', S.targets_gallery()),
+            gr.Accordion(label=f"Occlusion · {S.summary('occlusion')}"),
+            gr.Row(visible=not open_editor), gr.Row(visible=video and not open_editor),
+            gr.Row(visible=video and not open_editor)]
 
 
 def on_paint_open(frame, tick):
@@ -707,7 +731,6 @@ def on_paint_open(frame, tick):
     t = S.target()
     _painting.update(tid=t['id'], frame=int(frame or 1))
     layer = t['mask'] if t['mask'] is not None and t['mask'].shape[:2] == bg.shape[:2] else None
-    _info('Paint in white what must stay original in every frame of this file, then press Done.')
     return _paint_view(True, {'background': bg, 'layers': [layer] if layer is not None else [], 'composite': None}) + [tick]
 
 
@@ -745,9 +768,8 @@ def on_paint_remove(tick):
 def _label(t, frame_num, text):
     where = t['name']
     if t['kind'] != 'image':
-        where += f" · frame {frame_num}/{t['frames']} · {S.timecode(frame_num, t['fps'])}"
-    if len(S.targets) > 1:
-        where += f" ({S.selected_target_index() + 1}/{len(S.targets)})"
+        clock = S.clock(frame_num, t['fps'])
+        where += f' · {clock}' if clock else f' · frame {frame_num}'
     return f'{where} — {text}' if text else where
 
 
@@ -801,27 +823,23 @@ def _render_view(view, frame_num, swap_now):
     if view == 'Mask':
         shown = core.mask_view(frame, S.build_options(mask_view=True))
         plugin, warn = S.mask_plugin()
-        note = ('green = replaced by the swap, untinted = original kept'
-                + (f' ({warn})' if warn else '' if plugin else ' (no occlusion mask)'))
+        note = 'green = swapped' + (f' ({warn})' if warn else '' if plugin else ' (no occlusion mask)')
     elif view in ('Swapped', 'Side by side'):
         if not swap_now:
             return gr.skip(), gr.skip()                   # auto-update off: Refresh does it
         if not G.INPUT_FACESETS:
-            note = 'original: add a source face to see the swap'
+            note = 'add a source face'
         elif S.MODES[S.values['mode']] == 'selected' and not G.TARGET_FACES:
-            note = 'original: click the people to replace'
+            pass                                          # the pick hint below says what to do
         else:
             swapped = core.live_swap(frame.copy(), S.build_options())
             if swapped is None or np.array_equal(swapped, frame):
-                note = f"no face was swapped in this frame ({S.values['mode']})"
+                note = f"no face swapped ({S.values['mode']})"
             if view == 'Side by side':
                 shown = np.hstack([frame, swapped if swapped is not None else frame])
                 note = note or 'original | swapped'
             else:
                 shown = swapped if swapped is not None else frame
-                note = note or 'swapped'
-    else:
-        note = 'original'
     image = util.convert_to_gradio_preview(shown)
     if view != 'Original':
         # server-side time; if the browser shows it much later, the rest is the tunnel / network
@@ -830,8 +848,10 @@ def _render_view(view, frame_num, swap_now):
               f'{(t_done - t_swap) * 1000:.0f} ms | total {(t_done - t_start) * 1000:.0f} ms', flush=True)
     _preview['size'] = (image.shape[1], image.shape[0]) if view in ('Original', 'Swapped') else None
     _preview['view'] = view
-    pick = ' · click a face to add that person' if S.MODES[S.values['mode']] == 'selected' and view in ('Original', 'Swapped') else ''
-    return gr.Image(value=image, label=_label(t, frame_num, note + pick), visible=True), gr.Video(visible=False)
+    pick = ('click faces in the preview' if S.MODES[S.values['mode']] == 'selected' and not G.TARGET_FACES
+            and view in ('Original', 'Swapped') else '')
+    note = ' · '.join(x for x in (note, pick) if x)
+    return gr.Image(value=image, label=_label(t, frame_num, note), visible=True), gr.Video(visible=False)
 
 
 def _result_view():
@@ -865,6 +885,8 @@ def on_start_check(data):
     to the render. A refused Start leaves a running render and its buttons alone."""
     if _rendering():
         raise gr.Error('A render is already running')
+    if _painting['tid'] is not None:
+        raise gr.Error('Press Done or Cancel on the painting first')
     S.values.update(_vals(data))
     ready, text = S.readiness()
     if not ready:
@@ -973,13 +995,13 @@ def on_save_defaults(data):
         path = S.save_defaults()
     except OSError as e:
         raise gr.Error(f'Could not save: {e}')
-    _info(f'Saved as your defaults: {path}. They load at every start; "My defaults" brings them back.')
-    return [gr.Markdown('Settings saved as your defaults.'), gr.Button(interactive=True)]
+    _info('Saved as your defaults (loaded at every start)')
+    return gr.Button(interactive=True)
 
 
 def on_load_defaults(keys, tick):
     if not S.load_my_defaults():
-        gr.Warning('No saved defaults: set the panel up and press "Save as my defaults"')
+        gr.Warning('No saved defaults yet: set the panel up and press "Save my defaults"')
         return [gr.skip()] * (len(keys) + 1)
     _info('Your saved defaults are back')
     return [S.values[k] for k in keys] + [(tick or 0) + 1]
@@ -987,8 +1009,7 @@ def on_load_defaults(keys, tick):
 
 def on_factory_defaults(keys, tick):
     S.factory_defaults()
-    _info('Factory defaults on the panel. Your saved defaults are kept (they load at the next start); '
-            'Save replaces them.' if S.has_saved_defaults() else 'Factory defaults on the panel')
+    _info('Factory defaults loaded (your saved defaults are kept)' if S.has_saved_defaults() else 'Factory defaults loaded')
     return [S.values[k] for k in keys] + [(tick or 0) + 1]
 
 

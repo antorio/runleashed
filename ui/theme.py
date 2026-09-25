@@ -36,11 +36,17 @@ runleashed_css = """
 .gradio-container { max-width: 1840px !important; width: 96% !important; margin: 0 auto !important; }
 
 /* ---------- header: title left, versions hard right ---------- */
-#app_header { padding: 12px 4px 2px; border: none !important; background: transparent !important;
+#app_header { padding: 4px 4px 0; border: none !important; background: transparent !important;
   justify-content: space-between !important; align-items: baseline !important; flex-wrap: nowrap !important; }
-#app_header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+#app_header h1 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.01em; }
 #versions { margin-left: auto !important; text-align: right !important; }
 #versions, #versions * { font-family: var(--font-mono); font-size: 12.5px; color: var(--body-text-color-subdued); }
+
+/* ---------- less chrome above the tabs (1080p screens) ---------- */
+.gradio-container { padding-top: 6px !important; padding-bottom: 6px !important; }
+#app_header { margin-bottom: -10px !important; }
+.tabs { gap: 6px !important; }
+.tabitem { padding-top: 4px !important; padding-bottom: 4px !important; }
 
 /* ---------- tabs: bold, orange when active ---------- */
 .tab-nav button, button[role="tab"], .tabs > .tab-nav button { font-weight: 700 !important; }
@@ -58,11 +64,6 @@ button.secondary { background:#fff !important; border:1px solid var(--border-col
   color: var(--body-text-color) !important; box-shadow:none !important; font-weight:500 !important; font-size:13px !important; }
 button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !important; }
 
-/* ---------- Video FPS: label + small input on one line, input close to label ---------- */
-#fps_field label { display:flex !important; align-items:center !important; gap:14px !important; flex-wrap:nowrap !important; justify-content:flex-start !important; }
-#fps_field label > span { white-space:nowrap !important; margin:0 !important; flex:0 0 auto !important; }
-#fps_field input[type="number"] { max-width:110px !important; flex:0 0 auto !important; }
-
 /* ---------- shrink the Source/Target dropzones + show only icon + 'Drop File Here' ----------
    The dropzone text ('Drop File Here', '- or -', 'Click to Upload') is partly bare
    text, so we can't hide just one piece by selector. Instead: zero the wrap font
@@ -72,12 +73,13 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 #facemgr_gallery .caption-label { opacity: 1 !important; font-size: 12px !important; max-width: 94% !important; white-space: nowrap; text-overflow: ellipsis; }
 #facemgr_gallery .thumbnail-lg:hover .caption-label { opacity: 1 !important; }
 #facemgr_gallery .grid-wrap { min-height: 360px !important; max-height: 68vh !important; overflow-y: auto !important; }
-#src_drop button[tabindex], #tgt_drop button[tabindex] { height: 72px !important; min-height: 0 !important; }
+#src_drop button[tabindex], #tgt_drop button[tabindex] { height: 54px !important; min-height: 0 !important; }
 #src_drop .wrap, #tgt_drop .wrap { min-height: 0 !important; padding: 6px !important; font-size: 0 !important; }
-#src_drop .wrap svg, #tgt_drop .wrap svg { width: 22px !important; height: 22px !important; }
+#src_drop .wrap svg, #tgt_drop .wrap svg { width: 18px !important; height: 18px !important; }
 #src_drop .wrap::after, #tgt_drop .wrap::after {
-  content: "Drop files here or click"; display: block; margin-top: 4px;
-  font-size: 13px; font-weight: 500; color: var(--body-text-color-subdued); }
+  display: block; margin-top: 2px; font-size: 12.5px; font-weight: 500; color: var(--body-text-color-subdued); }
+#src_drop .wrap::after { content: "Drop photos or a faceset (.fsz), or click"; }
+#tgt_drop .wrap::after { content: "Drop images or videos, or click"; }
 #src_drop .file-preview, #tgt_drop .file-preview { min-height: 0 !important; }
 
 /* ---------- Face Swap: lists, hints, run bar ---------- */
@@ -88,12 +90,33 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
   outline: 3px solid var(--color-accent) !important; outline-offset: -3px; }
 #src_gal .caption-label, #tgt_gal .caption-label { opacity: 1 !important; font-size: 11px !important; max-width: 94% !important;
   white-space: nowrap; text-overflow: ellipsis; }
-.fs-step h3 { margin: 6px 0 0 !important; }
-.fs-hint, .fs-hint * { font-size: 12.5px !important; color: var(--body-text-color-subdued) !important; }
-#mode_radio .wrap { flex-direction: column !important; align-items: stretch !important; gap: 4px !important; }
+.fs-step h3 { margin: 4px 0 0 !important; font-size: 15px !important; }
+.fs-line, .fs-line * { font-size: 12.5px !important; line-height: 1.35 !important; }
+.fs-line p { margin: 0 !important; }
 #run_bar { align-items: center !important; }
 #ready_line, #ready_line * { font-size: 13px !important; }
+#ready_line p { margin: 0 0 2px !important; }
 #status_line, #status_line * { font-size: 13px !important; }
+#range_line, #range_line * { color: var(--body-text-color-subdued) !important; }
+
+/* ---------- Face Swap: compact spacing (1920x1080 target) ---------- */
+#fs_left, #center_stage, #fs_settings { gap: 8px !important; }
+#swap_row { gap: 12px !important; }
+#fs_settings .gradio-accordion > div, #fs_settings .form { gap: 8px !important; }
+.fs-buttons { gap: 6px !important; }
+.fs-path { gap: 6px !important; }
+#people_col { gap: 6px !important; }
+#view_bar, #frame_bar { align-items: center !important; gap: 6px !important; }
+#view_radio .wrap { gap: 4px !important; }
+#view_radio label { padding: 4px 10px !important; }
+#range_bar { align-items: center !important; gap: 6px !important; flex-wrap: nowrap !important; }
+#range_bar #range_line { flex: 1 1 auto !important; min-width: 0 !important; }
+.fs-checks { gap: 6px !important; }
+/* an empty gallery draws a 236px placeholder: keep the lists their own size */
+#src_gal .empty, #tgt_gal .empty { min-height: 0 !important; height: 146px !important; }
+#people_gal .empty { min-height: 0 !important; height: 90px !important; }
+#people_tools { align-items: center !important; gap: 8px !important; }
+.fs-checks label { white-space: nowrap !important; }
 /* Gradio dims a Markdown to 20% while any event writing it runs; the readiness
    line is refreshed by every preview, so it was faded most of the time */
 #ready_line .pending, #status_line .pending, #fs_left .pending { opacity: 1 !important; }
@@ -108,10 +131,6 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
   display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; gap: 4px !important; }
 #expr_checks .form > *, #expr_checks > div > * { flex: 1 1 0 !important; min-width: 0 !important; }
 #expr_checks label { white-space: nowrap !important; }
-
-/* ---------- galleries: fixed height, auto-scroll when boxes overflow ---------- */
-.facegrid .grid-wrap, .facegrid .grid-container { overflow-y: auto !important; }
-.facegrid { min-height: 0 !important; }
 
 /* ---------- centre column stays in view while the settings scroll ----------
    Pure CSS sticky (the container's overflow:hidden blocked it before). Only
@@ -141,5 +160,23 @@ footer { display: none !important; }
 # Runs on app load (gr.Blocks(js=...)). The centre column used to follow the
 # scroll with a requestAnimationFrame loop; CSS sticky does it now.
 runleashed_js = """
-() => {}
+() => {
+    // Face Swap: the arrow keys step the preview frame (like its ◀ ▶ buttons)
+    // unless the focus is in a text field or a slider being dragged.
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const el = document.activeElement;
+        // taken over as well: the frame slider (its own arrow stepping does not
+        // refresh the preview) and the View radios (a click leaves the focus
+        // there, and arrows would switch the view instead of the frame)
+        const ours = el && el.tagName === 'INPUT' && el.closest &&
+            ((el.type === 'range' && el.closest('#frame_slider')) || (el.type === 'radio' && el.closest('#view_radio')));
+        if (!ours && el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+        const btn = document.getElementById(e.key === 'ArrowLeft' ? 'frame_prev' : 'frame_next');
+        if (!btn || !btn.offsetParent) return;          // other tab, or not a video
+        e.preventDefault();
+        btn.click();
+    });
+}
 """
