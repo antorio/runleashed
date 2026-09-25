@@ -67,17 +67,17 @@ def _vals(data):
     return {k: data[c] for k, c in settings.items() if c in data}
 
 
-# The galleries' highlight is set by the server (the source in use, the file
-# shown, the person picked). Gradio's Gallery then fires `select` as if it had
-# been clicked, but only when its highlight actually changes; processed after a
-# newer action, that echo would move the choice back. So the server follows
-# what each gallery highlights in the browser (Gallery.svelte: a new value
-# keeps the highlight while it is in range and drops it after the gallery was
-# empty) and notes an echo only for a highlight that really changes. A real
-# click on another thumbnail clears the notes; notes also expire.
-_shown = {'src': None, 'tgt': None, 'people': None}
-_emptied = {'src': True, 'tgt': True, 'people': True}
-_echo = {'src': [], 'tgt': [], 'people': []}
+# The source gallery's highlight (the source in use) is set by the server.
+# Gradio's Gallery then fires `select` as if it had been clicked, but only
+# when its highlight actually changes; processed after a newer action, that
+# echo would move the choice back. So the server follows what the gallery
+# highlights in the browser (Gallery.svelte: a new value keeps the highlight
+# while it is in range and drops it after the gallery was empty) and notes an
+# echo only for a highlight that really changes. A real click on another
+# thumbnail clears the notes; notes also expire.
+_shown = {'src': None}
+_emptied = {'src': True}
+_echo = {'src': []}
 ECHO_SECONDS = 30
 
 
@@ -125,12 +125,9 @@ def src_highlight():
     return _highlight('src', S.active_source_index() if G.INPUT_FACESETS else None)
 
 
-def tgt_highlight():
-    return _highlight('tgt', S.selected_target_index())
-
-
-def people_highlight():
-    return _highlight('people', S.selected_person if G.TARGET_FACES else None)
+def _title(name, key):
+    extra = S.summary(key)
+    return f'{name} · {extra}' if extra else name
 
 
 # ============================================================================ layout
@@ -148,54 +145,48 @@ def faceswap_tab():
 
             # --------------------------------------------------------------- left: set up
             with gr.Column(scale=3, min_width=280, elem_id="fs_left"):
-                gr.Markdown("### 1 · Source faces", elem_classes="fs-step")
-                C['src_gal'] = gr.Gallery(value=S.sources_gallery(), show_label=False, columns=3, allow_preview=False, preview=False,
-                                          interactive=False, object_fit="cover", height="150px", elem_id="src_gal")
-                C['src_info'] = gr.Markdown(S.source_info(), visible=bool(S.source_info()), elem_classes="fs-line")
-                have_src = bool(G.INPUT_FACESETS)
-                with gr.Row(elem_classes="fs-buttons"):
-                    C['btn_src_remove'] = gr.Button("Remove this source", size="sm", min_width=80, interactive=have_src)
-                    C['btn_src_clear'] = gr.Button("Remove all", size="sm", min_width=80, interactive=have_src)
-                    C['btn_src_undo'] = gr.Button(S.source_undo_label() or "Undo", size="sm", min_width=80,
-                                                  interactive=S.source_undo_label() is not None)
-                with gr.Row(elem_classes="fs-buttons"):
-                    C['btn_src_combine'] = gr.Button(S.combine_label(), size="sm", visible=len(S.same_person_photos()) >= 2)
-                    C['btn_src_shuffle'] = gr.Button("Shuffle order", size="sm",
-                                                     visible=S.MODES[V['mode']] == 'all_input' and len(G.INPUT_FACESETS) > 1)
-                C['src_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="src_drop")
-                with gr.Row(equal_height=True, elem_classes="fs-path"):
-                    C['src_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                               placeholder="or a path: .fsz, photo or folder (Enter)")
-                    C['btn_src_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
+                with gr.Accordion(_title("Source faces", 'sources'), open=True) as acc_src:
+                    C['acc_src'] = acc_src
+                    # whole faces, no captions; the × on each and the order
+                    # numbers ("One source per face") come from ui/theme.py
+                    C['src_gal'] = gr.Gallery(value=S.sources_gallery(), show_label=False, columns=4, allow_preview=False,
+                                              preview=False, interactive=False, object_fit="contain", height="150px",
+                                              elem_id="src_gal")
+                    C['src_x'] = gr.Textbox(elem_id="src_x", elem_classes="fs-hidden", show_label=False, container=False)
+                    with gr.Row(elem_classes="fs-buttons"):
+                        C['btn_src_combine'] = gr.Button(S.combine_label(), size="sm", visible=len(S.same_person_photos()) >= 2)
+                        C['btn_src_shuffle'] = gr.Button("Shuffle order", size="sm",
+                                                         visible=S.MODES[V['mode']] == 'all_input' and len(G.INPUT_FACESETS) > 1)
+                    C['src_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="src_drop")
+                    with gr.Row(equal_height=True, elem_classes="fs-path"):
+                        C['src_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
+                                                   placeholder="or a path: .fsz, photo or folder (Enter)")
+                        C['btn_src_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
-                gr.Markdown("### 2 · Target files", elem_classes="fs-step")
-                C['tgt_gal'] = gr.Gallery(value=S.targets_gallery(), show_label=False, columns=3, allow_preview=False, preview=False,
-                                          interactive=False, object_fit="contain", height="150px", elem_id="tgt_gal")
-                have_tgt = bool(S.targets)
-                with gr.Row(elem_classes="fs-buttons"):
-                    C['btn_tgt_remove'] = gr.Button("Remove this file", size="sm", min_width=80, interactive=have_tgt)
-                    C['btn_tgt_clear'] = gr.Button("Remove all", size="sm", min_width=80, interactive=have_tgt)
-                    C['btn_tgt_undo'] = gr.Button(S.undo_label() or "Undo", size="sm", min_width=80, interactive=S.undo_label() is not None)
-                C['tgt_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="tgt_drop")
-                with gr.Row(equal_height=True, elem_classes="fs-path"):
-                    C['tgt_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                               placeholder="or a path: file or folder (Enter)")
-                    C['btn_tgt_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
+                with gr.Accordion(_title("Target files", 'targets'), open=True) as acc_tgt:
+                    C['acc_tgt'] = acc_tgt
+                    # the list itself: drop files on it, ↑ adds more, × removes
+                    # one, click a name to show it in the preview
+                    C['tgt_files'] = gr.Files(value=S.target_paths() or None, show_label=False, file_count="multiple",
+                                              file_types=None, height=170, elem_id="tgt_files")
+                    with gr.Row(equal_height=True, elem_classes="fs-path"):
+                        C['tgt_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
+                                                   placeholder="or a path: file or folder (Enter)")
+                        C['btn_tgt_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
-                gr.Markdown("### 3 · Faces to replace", elem_classes="fs-step")
-                mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
-                                              elem_id="mode_dd"))
-                with gr.Column(visible=S.MODES[V['mode']] == 'selected', elem_id="people_col") as people_col:
-                    C['people_col'] = people_col
-                    C['people_hint'] = gr.Markdown("Click faces in the preview to add them.", visible=not G.TARGET_FACES,
-                                                   elem_classes="fs-line")
-                    C['people_gal'] = gr.Gallery(value=S.people_gallery(), show_label=False, columns=4, allow_preview=False,
-                                                 preview=False, interactive=False, object_fit="cover", height="110px",
-                                                 elem_id="people_gal")
-                    with gr.Row(elem_id="people_tools"):
-                        C['btn_person_remove'] = gr.Button("Remove this person", size="sm", scale=1, min_width=120,
-                                                           interactive=bool(G.TARGET_FACES))
-                        _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01, scale=2,
+                with gr.Accordion(_title("Faces to replace", 'faces'), open=True) as acc_faces:
+                    C['acc_faces'] = acc_faces
+                    mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
+                                                  elem_id="mode_dd"))
+                    with gr.Column(visible=S.MODES[V['mode']] == 'selected', elem_id="people_col") as people_col:
+                        C['people_col'] = people_col
+                        C['people_hint'] = gr.Markdown("Click faces in the preview to add them.", visible=not G.TARGET_FACES,
+                                                       elem_classes="fs-line")
+                        C['people_gal'] = gr.Gallery(value=S.people_gallery(), show_label=False, columns=5, allow_preview=False,
+                                                     preview=False, interactive=False, object_fit="contain", height="100px",
+                                                     elem_id="people_gal")
+                        C['people_x'] = gr.Textbox(elem_id="people_x", elem_classes="fs-hidden", show_label=False, container=False)
+                        _s('tolerance', gr.Slider(0.01, 1.0, value=V['tolerance'], step=0.01,
                                                   label="Match tolerance (higher = looser)"))
 
             # --------------------------------------------------------------- centre: preview on top, controls below
@@ -242,11 +233,6 @@ def faceswap_tab():
 
             # --------------------------------------------------------------- right: settings
             with gr.Column(scale=3, min_width=300, elem_id="fs_settings"):
-                with gr.Row(elem_classes="fs-buttons"):
-                    C['btn_save_def'] = gr.Button("Save my defaults", size="sm", min_width=90)
-                    C['btn_load_def'] = gr.Button("Load my defaults", size="sm", min_width=90, interactive=S.has_saved_defaults())
-                    C['btn_reset_def'] = gr.Button("Factory defaults", size="sm", min_width=90)
-
                 with gr.Accordion(f"Swap · {S.summary('swap')}", open=True) as acc_swap:
                     with gr.Row():
                         _s('resolution', gr.Dropdown(S.RESOLUTIONS, value=V['resolution'], label="Resolution"))
@@ -337,6 +323,11 @@ def faceswap_tab():
                     C['out_fps'] = gr.Number(value=(t or {}).get('out_fps', 0), label="Output fps, this video (0 = original)",
                                              precision=2, minimum=0, visible=video)
 
+                with gr.Row(elem_classes="fs-buttons", elem_id="defaults_bar"):
+                    C['btn_save_def'] = gr.Button("Save my defaults", size="sm", min_width=90)
+                    C['btn_load_def'] = gr.Button("Load my defaults", size="sm", min_width=90, interactive=S.has_saved_defaults())
+                    C['btn_reset_def'] = gr.Button("Factory defaults", size="sm", min_width=90)
+
         C.update(acc_swap=acc_swap, acc_expr=acc_expr, acc_occ=acc_occ, acc_enh=acc_enh, acc_det=acc_det, acc_vid=acc_vid)
 
     _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm_col, method, keep_col, mode)
@@ -374,71 +365,60 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['multi_angle'].change(None, [C['multi_angle']], [C['upright_col']], js=show(f"v === '{always}'"), **INTERNAL)
     C['lmk_gate'].change(None, [C['lmk_gate']], [C['gate_col']], js=show('v'), **INTERNAL)
 
-    # preview
+    # preview (it also refreshes the section headers)
     preview_inputs = set(settings.values()) | {C['view'], C['frame'], C['auto'], tick}
-    preview_outputs = [C['preview'], C['result_video'], C['ready_md'], C['acc_swap'], C['acc_expr'], C['acc_occ'],
-                       C['acc_enh'], C['acc_det'], C['acc_vid']]
+    preview_outputs = [C['preview'], C['result_video'], C['ready_md']] + [C[k] for k in HEADER_KEYS]
     tick.change(on_preview, preview_inputs, preview_outputs, trigger_mode="always_last", concurrency_id="fs_preview",
                 concurrency_limit=1, show_progress="hidden", **INTERNAL)
     C['btn_refresh'].click(lambda d: on_preview(d, force=True), preview_inputs, preview_outputs, concurrency_id="fs_preview",
                            concurrency_limit=1, show_progress="hidden", **INTERNAL)
-    people_out = [C['people_gal'], C['people_hint'], C['btn_person_remove'], C['ready_md'], tick]
+    people_out = [C['people_gal'], C['people_hint'], C['ready_md'], tick]
     C['preview'].select(on_preview_click, [C['frame'], C['view'], tick], people_out, **one)
 
     # sources
     det = [settings['det_thresh'], settings['det_size']]
-    src_out = [C['src_gal'], C['src_info'], C['btn_src_combine'], C['btn_src_shuffle'], C['btn_src_undo'],
-               C['btn_src_remove'], C['btn_src_clear'], C['ready_md'], tick]
-    fix_src = dict(fn=src_highlight,
-                   inputs=None, outputs=C['src_gal'], show_progress="hidden", **INTERNAL)
+    src_out = [C['src_gal'], C['btn_src_combine'], C['btn_src_shuffle'], C['ready_md'], tick]
+    fix_src = dict(fn=src_highlight, inputs=None, outputs=C['src_gal'], show_progress="hidden", **INTERNAL)
     C['src_drop'].upload(on_src_upload, [C['src_drop'], tick] + det, [C['src_drop']] + src_out, **slow).then(**fix_src)
     for ev in (C['btn_src_path'].click, C['src_path'].submit):          # the Add button or Enter
         ev(on_src_path, [C['src_path'], tick] + det, src_out, **slow).then(**fix_src)
-    # the mode renumbers the source captions (One source per face): keep the highlight
-    mode.change(on_mode, [mode], [C['people_col'], C['src_gal'], C['src_info'], C['btn_src_shuffle'],
-                                  C['ready_md']], **one).then(**fix_src)
-    C['src_gal'].select(on_src_select, [tick], [C['src_info'], C['btn_src_combine'], C['ready_md'], tick], **one)
-    C['btn_src_remove'].click(on_src_remove, [tick], src_out, **one).then(**fix_src)
-    C['btn_src_clear'].click(on_src_clear, [tick], src_out, **one).then(**fix_src)
-    C['btn_src_undo'].click(on_src_undo, [tick], src_out, **one).then(**fix_src)
+    # the mode changes the source numbering (One source per face): keep the highlight
+    mode.change(on_mode, [mode], [C['people_col'], C['btn_src_shuffle'], C['ready_md']], **one).then(**fix_src)
+    C['src_gal'].select(on_src_select, [tick], [C['btn_src_combine'], C['ready_md'], tick], **one)
+    C['src_x'].input(on_src_x, [C['src_x'], tick], src_out, **one).then(**fix_src)
     C['btn_src_combine'].click(on_src_combine, [tick], src_out, **slow).then(**fix_src)
     C['btn_src_shuffle'].click(on_src_shuffle, [tick], src_out, **one).then(**fix_src)
 
-    # targets
-    tgt_out = [C['tgt_gal'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
-               C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['btn_tgt_remove'], C['btn_tgt_clear'],
-               C['ready_md'], tick]
-    fix_tgt = dict(fn=tgt_highlight, inputs=None, outputs=C['tgt_gal'],
-                   show_progress="hidden", **INTERNAL)
-    C['tgt_drop'].upload(on_tgt_upload, [C['tgt_drop'], tick], [C['tgt_drop']] + tgt_out, **slow).then(**fix_tgt)
+    # targets: the file list is the list
+    tgt_out = [C['tgt_files'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
+               C['paint_md'], C['btn_paint_remove'], C['ready_md'], tick]
+    C['tgt_files'].upload(on_tgt_upload, [C['tgt_files'], tick], tgt_out, **slow)
+    # the list's remaining files, not gr.DeletedFileData: Gradio refuses event
+    # data naming a file outside its upload cache (a target added by path)
+    C['tgt_files'].delete(on_tgt_delete, [C['tgt_files'], tick], tgt_out[1:], **one)
+    C['tgt_files'].clear(on_tgt_clear, [tick], tgt_out, **one)
+    C['tgt_files'].select(on_tgt_select, [tick], tgt_out[1:], **one)       # not the list: it stays as it is
     for ev in (C['btn_tgt_path'].click, C['tgt_path'].submit):
-        ev(on_tgt_path, [C['tgt_path'], tick], tgt_out, **slow).then(**fix_tgt)
-    C['tgt_gal'].select(on_tgt_select, [tick], tgt_out, **one)
-    C['btn_tgt_remove'].click(on_tgt_remove, [tick], tgt_out, **one).then(**fix_tgt)
-    C['btn_tgt_clear'].click(on_tgt_clear, [tick], tgt_out, **one).then(**fix_tgt)
-    C['btn_tgt_undo'].click(on_tgt_undo, [tick], tgt_out, **one).then(**fix_tgt)
+        ev(on_tgt_path, [C['tgt_path'], tick], tgt_out, **slow)
     C['btn_prev'].click(None, [tick], [tick], js=STEP_JS % -1, **INTERNAL)
     C['btn_next'].click(None, [tick], [tick], js=STEP_JS % 1, **INTERNAL)
-    range_out = [C['range_md'], C['tgt_gal'], C['ready_md']]
-    C['btn_start_here'].click(lambda f: on_range('start', f), [C['frame']], range_out, **one).then(**fix_tgt)
-    C['btn_end_here'].click(lambda f: on_range('end', f), [C['frame']], range_out, **one).then(**fix_tgt)
-    C['btn_whole'].click(lambda f: on_range('whole', f), [C['frame']], range_out, **one).then(**fix_tgt)
+    range_out = [C['range_md'], C['ready_md']]
+    C['btn_start_here'].click(lambda f: on_range('start', f), [C['frame']], range_out, **one)
+    C['btn_end_here'].click(lambda f: on_range('end', f), [C['frame']], range_out, **one)
+    C['btn_whole'].click(lambda f: on_range('whole', f), [C['frame']], range_out, **one)
     C['out_fps'].input(on_out_fps, [C['out_fps']], None, **one)
 
     # people
-    fix_people = dict(fn=people_highlight, inputs=None,
-                      outputs=C['people_gal'], show_progress="hidden", **INTERNAL)
-    C['people_gal'].select(on_person_select, None, None, **one)
-    C['btn_person_remove'].click(on_person_remove, [tick], people_out, **one).then(**fix_people)
+    C['people_x'].input(on_person_x, [C['people_x'], tick], people_out, **one)
 
     # painted keep-original mask
-    paint_out = [C['editor_col'], C['preview'], C['editor'], C['paint_md'], C['btn_paint_remove'], C['tgt_gal'],
-                 C['acc_occ'], C['view_bar'], C['frame_row'], C['range_row'], tick]
+    paint_out = [C['editor_col'], C['preview'], C['editor'], C['paint_md'], C['btn_paint_remove'], C['acc_occ'],
+                 C['view_bar'], C['frame_row'], C['range_row'], tick]
     C['btn_paint'].click(on_paint_open, [C['frame'], tick], paint_out, **one)
-    C['btn_paint_done'].click(on_paint_done, [C['editor'], C['frame'], tick], paint_out, **one).then(**fix_tgt)
+    C['btn_paint_done'].click(on_paint_done, [C['editor'], C['frame'], tick], paint_out, **one)
     C['btn_paint_clear'].click(on_paint_clear, [C['frame'], tick], paint_out, **one)
     C['btn_paint_cancel'].click(on_paint_cancel, [tick], paint_out, **one)
-    C['btn_paint_remove'].click(on_paint_remove, [tick], paint_out, **one).then(**fix_tgt)
+    C['btn_paint_remove'].click(on_paint_remove, [tick], paint_out, **one)
 
     # run
     run_inputs = set(settings.values()) | {tick}
@@ -462,21 +442,20 @@ def register_load(ui):
     applied settings), not the build-time values."""
     keys = list(settings)
     outputs = [settings[k] for k in keys] + refresh_outputs()
+
     def on_load():
         _page_loaded()
         return [S.values[k] for k in keys] + refresh_values()
     ui.load(on_load, None, outputs, show_progress="hidden", **INTERNAL).then(
-        lambda: [src_highlight(), tgt_highlight()],
-        None, [C['src_gal'], C['tgt_gal']], show_progress="hidden", **INTERNAL)
+        src_highlight, None, C['src_gal'], show_progress="hidden", **INTERNAL)
 
 
 def refresh_outputs():
     """Components refresh_values() fills (also used by other tabs)."""
-    return [C['src_gal'], C['src_info'], C['btn_src_combine'], C['btn_src_shuffle'], C['btn_src_undo'],
-            C['btn_src_remove'], C['btn_src_clear'],
-            C['tgt_gal'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
-            C['paint_md'], C['btn_paint_remove'], C['btn_tgt_undo'], C['btn_tgt_remove'], C['btn_tgt_clear'],
-            C['people_col'], C['people_gal'], C['people_hint'], C['btn_person_remove'],
+    return [C['src_gal'], C['btn_src_combine'], C['btn_src_shuffle'],
+            C['tgt_files'], C['frame_row'], C['range_row'], C['frame'], C['range_md'], C['out_fps'],
+            C['paint_md'], C['btn_paint_remove'],
+            C['people_col'], C['people_gal'], C['people_hint'],
             C['ready_md'], C['btn_start'], C['btn_stop'], C['tick']]
 
 
@@ -485,7 +464,7 @@ def refresh_values():
     # and only the page that pressed Start hears when it ends (a second Start
     # is refused; a Stop with nothing running says so). The preview tick is a
     # new value (milliseconds): the page's own tick counts up by one.
-    return (_src_updates()[:7] + _tgt_updates()[:11] +
+    return (_src_updates()[:3] + _tgt_updates()[:8] +
             [gr.Column(visible=S.MODES[S.values['mode']] == 'selected')] + _people_updates() +
             [gr.Markdown(S.readiness()[1]), gr.Button(interactive=True), gr.Button(interactive=_rendering()),
              int(time.time() * 1000)])
@@ -493,18 +472,11 @@ def refresh_values():
 
 # ============================================================================ updates
 
-def _src_info_update():
-    text = S.source_info()
-    return gr.Markdown(value=text, visible=bool(text))
-
-
 def _src_updates():
     n = len(G.INPUT_FACESETS)
-    return [_gallery('src', S.sources_gallery()), _src_info_update(),
+    return [_gallery('src', S.sources_gallery()),
             gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
             gr.Button(visible=S.MODES[S.values['mode']] == 'all_input' and n > 1),
-            gr.Button(value=S.source_undo_label() or "Undo", interactive=S.source_undo_label() is not None),
-            gr.Button(interactive=n > 0), gr.Button(interactive=n > 0),
             gr.Markdown(S.readiness()[1])]
 
 
@@ -512,20 +484,17 @@ def _tgt_updates():
     t = S.target()
     video = t is not None and t['kind'] != 'image'
     frames = t['frames'] if video else 2
-    return [_gallery('tgt', S.targets_gallery()),
+    return [gr.Files(value=S.target_paths() or None),
             gr.Row(visible=video), gr.Row(visible=video),
             gr.Slider(minimum=1, maximum=max(2, frames), value=t['start'] if video else 1),
             gr.Markdown(S.range_text()),
             gr.Number(value=t['out_fps'] if video else 0, visible=video),
             _paint_md_update(), _paint_remove_update(),
-            gr.Button(value=S.undo_label() or "Undo", interactive=S.undo_label() is not None),
-            gr.Button(interactive=bool(S.targets)), gr.Button(interactive=bool(S.targets)),
             gr.Markdown(S.readiness()[1])]
 
 
 def _people_updates():
-    have = bool(G.TARGET_FACES)
-    return [_gallery('people', S.people_gallery()), gr.Markdown(visible=not have), gr.Button(interactive=have)]
+    return [gr.Gallery(value=S.people_gallery()), gr.Markdown(visible=not G.TARGET_FACES)]
 
 
 def _messages(messages):
@@ -546,13 +515,20 @@ def _apply_detection(thresh, size):
         G.det_thresh, G.det_size = float(thresh), int(size)
 
 
+def _clicked_index(value):
+    """The index sent by a thumbnail's × (ui/theme.py: 'index:nonce')."""
+    try:
+        return int(str(value).split(':', 1)[0])
+    except (TypeError, ValueError):
+        return None
+
+
 # ============================================================================ handlers: sources
 
 def on_mode(mode):
     S.values['mode'] = mode
     n = len(G.INPUT_FACESETS)
     return [gr.Column(visible=S.MODES[mode] == 'selected'),
-            _gallery('src', S.sources_gallery()), _src_info_update(),
             gr.Button(visible=S.MODES[mode] == 'all_input' and n > 1), gr.Markdown(S.readiness()[1])]
 
 
@@ -571,27 +547,16 @@ def on_src_path(path, tick, thresh, size):
 
 def on_src_select(evt: gr.SelectData, tick):
     if evt is None or _is_echo('src', evt.index) or evt.index == S.active_source_index():
-        return [gr.skip()] * 4
+        return [gr.skip()] * 3
     S.select_source(evt.index)
-    return [_src_info_update(), gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
+    return [gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
             gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
-def on_src_remove(tick):
-    if not S.remove_active_source():
-        gr.Warning('No source to remove')
-    return _src_updates() + [(tick or 0) + 1]
-
-
-def on_src_clear(tick):
-    S.clear_sources()
-    return _src_updates() + [(tick or 0) + 1]
-
-
-def on_src_undo(tick):
-    label = S.undo_sources()
-    if label:
-        _info(f'Undone: {label}')
+def on_src_x(value, tick):
+    i = _clicked_index(value)
+    if i is None or not S.remove_source(i):
+        return [gr.skip()] * 5
     return _src_updates() + [(tick or 0) + 1]
 
 
@@ -608,9 +573,13 @@ def on_src_shuffle(tick):
 # ============================================================================ handlers: targets
 
 def on_tgt_upload(files, tick, progress=gr.Progress()):
-    if files:
-        _messages(S.add_targets([f.name if hasattr(f, 'name') else str(f) for f in files], progress))
-    return [None] + _tgt_updates() + [(tick or 0) + 1]
+    # the list's value: the files already listed plus the ones just dropped
+    paths = [f.name if hasattr(f, 'name') else str(f) for f in (files or [])]
+    known = set(S.target_paths())
+    new = [p for p in paths if p not in known]
+    if new:
+        _messages(S.add_targets(new, progress))
+    return _tgt_updates() + [(tick or 0) + 1]
 
 
 def on_tgt_path(path, tick):
@@ -619,28 +588,22 @@ def on_tgt_path(path, tick):
 
 
 def on_tgt_select(evt: gr.SelectData, tick):
-    if evt is None or _is_echo('tgt', evt.index) or evt.index == S.selected_target_index():
-        return [gr.skip()] * 13
+    if evt is None or evt.index == S.selected_target_index():
+        return [gr.skip()] * 9
     S.select_target(evt.index)
-    return _tgt_updates() + [(tick or 0) + 1]
+    return _tgt_updates()[1:] + [(tick or 0) + 1]
 
 
-def on_tgt_remove(tick):
-    if not S.remove_selected_target():
-        gr.Warning('No file to remove')
-    return _tgt_updates() + [(tick or 0) + 1]
+def on_tgt_delete(files, tick):
+    """A × in the list: the files still listed stay, the others go."""
+    remaining = {f.name if hasattr(f, 'name') else str(f) for f in (files or [])}
+    for path in [p for p in S.target_paths() if p not in remaining]:
+        S.remove_target(path)
+    return _tgt_updates()[1:] + [(tick or 0) + 1]
 
 
 def on_tgt_clear(tick):
-    if S.targets:
-        S.clear_targets()
-    return _tgt_updates() + [(tick or 0) + 1]
-
-
-def on_tgt_undo(tick):
-    label = S.undo_targets()
-    if label:
-        _info(f'Undone: {label}')
+    S.clear_targets()
     return _tgt_updates() + [(tick or 0) + 1]
 
 
@@ -651,7 +614,7 @@ def on_range(which, frame):
         note = S.set_range(which, frame)
         if note:
             _info(note)
-    return [gr.Markdown(S.range_text()), _gallery('tgt', S.targets_gallery()), gr.Markdown(S.readiness()[1])]
+    return [gr.Markdown(S.range_text()), gr.Markdown(S.readiness()[1])]
 
 
 def on_out_fps(value):
@@ -660,23 +623,19 @@ def on_out_fps(value):
 
 # ============================================================================ handlers: people
 
-def on_person_select(evt: gr.SelectData):
-    if evt is not None and not _is_echo('people', evt.index):
-        S.selected_person = evt.index
-
-
-def on_person_remove(tick):
-    if not S.remove_selected_person():
-        gr.Warning('No person to remove')
+def on_person_x(value, tick):
+    i = _clicked_index(value)
+    if i is None or not S.remove_person(i):
+        return [gr.skip()] * 4
     return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
 
 
 def on_preview_click(evt: gr.SelectData, frame, view, tick):
     if S.MODES[S.values['mode']] != 'selected':
-        return [gr.skip()] * 5                             # clicking the preview only picks in Specific people
+        return [gr.skip()] * 4                             # clicking the preview only picks in Specific people
     if view not in ('Original', 'Swapped') or not _preview['size'] or evt is None:
         _info('Pick people in the Original or Swapped view')
-        return [gr.skip()] * 5
+        return [gr.skip()] * 4
     x, y = evt.index[0], evt.index[1]
     msg = S.pick_person_at(frame, x, y, _preview['size'])
     (_info if msg == 'Person added' else gr.Warning)(msg)
@@ -717,8 +676,8 @@ def _paint_view(open_editor, editor_value=gr.skip()):
     t = S.target()
     video = t is not None and t['kind'] != 'image'
     return [gr.Column(visible=open_editor), gr.Image(visible=not open_editor), editor_value,
-            _paint_md_update(), _paint_remove_update(), _gallery('tgt', S.targets_gallery()),
-            gr.Accordion(label=f"Occlusion · {S.summary('occlusion')}"),
+            _paint_md_update(), _paint_remove_update(),
+            gr.Accordion(label=_title('Occlusion', 'occlusion')),
             gr.Row(visible=not open_editor), gr.Row(visible=video and not open_editor),
             gr.Row(visible=video and not open_editor)]
 
@@ -773,10 +732,17 @@ def _label(t, frame_num, text):
     return f'{where} — {text}' if text else where
 
 
+# every section box and the summary in its title
+HEADERS = [('acc_src', 'Source faces', 'sources'), ('acc_tgt', 'Target files', 'targets'),
+           ('acc_faces', 'Faces to replace', 'faces'), ('acc_swap', 'Swap', 'swap'),
+           ('acc_expr', 'Expression', 'expression'), ('acc_occ', 'Occlusion', 'occlusion'),
+           ('acc_enh', 'Enhance', 'enhance'), ('acc_det', 'Detection & tracking', 'detection'),
+           ('acc_vid', 'Video output', 'video')]
+HEADER_KEYS = [k for k, _, _ in HEADERS]
+
+
 def _headers():
-    return [gr.Accordion(label=f"Swap · {S.summary('swap')}"), gr.Accordion(label=f"Expression · {S.summary('expression')}"),
-            gr.Accordion(label=f"Occlusion · {S.summary('occlusion')}"), gr.Accordion(label=f"Enhance · {S.summary('enhance')}"),
-            gr.Accordion(label=f"Detection & tracking · {S.summary('detection')}"), gr.Accordion(label=f"Video output · {S.summary('video')}")]
+    return [gr.Accordion(label=_title(name, key)) for _, name, key in HEADERS]
 
 
 def on_preview(data, force=False):
@@ -792,9 +758,9 @@ def on_preview(data, force=False):
         ran, out = core.preview_locked(work)
     except Exception as e:
         traceback.print_exc()
-        return [gr.Image(label=f'Preview failed: {e}'), gr.Video(visible=False), gr.skip()] + [gr.skip()] * 6
+        return [gr.Image(label=f'Preview failed: {e}'), gr.Video(visible=False), gr.skip()] + [gr.skip()] * len(HEADERS)
     if not ran:
-        return [gr.Image(label='Preview paused while rendering'), gr.skip(), gr.skip()] + [gr.skip()] * 6
+        return [gr.Image(label='Preview paused while rendering'), gr.skip(), gr.skip()] + [gr.skip()] * len(HEADERS)
     image, video = out
     if _painting['tid'] is not None:
         image, video = gr.skip(), gr.skip()        # the editor stands in for the preview until Done / Cancel

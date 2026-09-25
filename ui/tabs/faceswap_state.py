@@ -261,8 +261,18 @@ def build_options(mask_view=False):
 
 
 def summary(section):
-    """A few words for a settings section's header."""
+    """A few words for a section's header."""
     v = values
+    if section == 'sources':
+        n = len(G.INPUT_FACESETS)
+        return '' if n == 0 else f'{n} · in this order' if MODES[v['mode']] == 'all_input' else str(n)
+    if section == 'targets':
+        images = sum(1 for t in targets if t['kind'] == 'image')
+        videos = len(targets) - images
+        return ' · '.join(x for x in (f"{videos} video{'s' if videos != 1 else ''}" if videos else '',
+                                      f"{images} image{'s' if images != 1 else ''}" if images else '') if x)
+    if section == 'faces':
+        return v['mode'] + (f' · {len(G.TARGET_FACES)} picked' if MODES[v['mode']] == 'selected' else '')
     if section == 'swap':
         parts = [v['resolution']]
         if int(v['passes']) > 1:
@@ -296,7 +306,6 @@ def summary(section):
 
 source_captions = []                 # parallel to roop.globals.INPUT_FACESETS / ui.globals.ui_input_thumbs
 active_source = 0
-_source_undo = []                     # (label, [(position, faceset, thumb, caption)], faceset added or None, source in use)
 
 
 def active_source_index():
@@ -320,18 +329,10 @@ def _sync_sources():
 
 
 def sources_gallery():
+    """The source thumbnails, whole and without captions (the numbers of
+    "One source per face" are drawn by CSS in a corner)."""
     _sync_sources()
-    numbered = MODES[values['mode']] == 'all_input'
-    return [(thumb, f'{i + 1} · {cap}' if numbered else cap)
-            for i, (thumb, cap) in enumerate(zip(ui.globals.ui_input_thumbs, source_captions))]
-
-
-def source_info():
-    _sync_sources()
-    n = len(G.INPUT_FACESETS)
-    if n < 2 or MODES[values['mode']] == 'all_input':
-        return ''                      # nothing, one source, or the numbered captions say it
-    return f'**In use:** {source_captions[active_source_index()]} · {active_source_index() + 1} of {n}'
+    return list(ui.globals.ui_input_thumbs)
 
 
 def combine_label():
@@ -476,60 +477,24 @@ def select_source(index):
 
 
 def _take_sources(indexes):
-    """Remove these sources; their records (ascending position) for Undo."""
+    """Remove these sources (their records, ascending position)."""
     records = []
     for i in sorted(set(indexes), reverse=True):
         records.append((i, G.INPUT_FACESETS.pop(i), ui.globals.ui_input_thumbs.pop(i), source_captions.pop(i)))
     return records[::-1]
 
 
-def remove_active_source():
+def remove_source(index):
+    """The × on a source's thumbnail."""
     global active_source
     _sync_sources()
-    if not G.INPUT_FACESETS:
-        return False
-    i = active_source_index()
-    in_use = G.INPUT_FACESETS[i]
-    _source_undo.append(('remove', _take_sources([i]), None, in_use))
-    active_source = min(i, len(G.INPUT_FACESETS) - 1) if G.INPUT_FACESETS else 0
-    return True
-
-
-def clear_sources():
-    global active_source
-    _sync_sources()
-    if not G.INPUT_FACESETS:
+    if not 0 <= index < len(G.INPUT_FACESETS):
         return False
     in_use = G.INPUT_FACESETS[active_source_index()]
-    _source_undo.append(('remove all', _take_sources(range(len(G.INPUT_FACESETS))), None, in_use))
-    active_source = 0
+    _take_sources([index])
+    active_source = next((i for i, s in enumerate(G.INPUT_FACESETS) if s is in_use), min(index, len(G.INPUT_FACESETS) - 1))
+    active_source = max(active_source, 0)
     return True
-
-
-def undo_sources():
-    """Undo the last remove / combine. Returns its label or None."""
-    global active_source
-    _sync_sources()
-    if not _source_undo:
-        return None
-    label, records, added, in_use = _source_undo.pop()
-    if added is not None:
-        k = next((i for i, s in enumerate(G.INPUT_FACESETS) if s is added), None)
-        if k is not None:
-            _take_sources([k])
-    for position, face_set, thumb, caption in records:
-        if any(s is face_set for s in G.INPUT_FACESETS):
-            continue
-        position = min(position, len(G.INPUT_FACESETS))
-        G.INPUT_FACESETS.insert(position, face_set)
-        ui.globals.ui_input_thumbs.insert(position, thumb)
-        source_captions.insert(position, caption)
-    active_source = next((i for i, s in enumerate(G.INPUT_FACESETS) if s is in_use), 0)
-    return label
-
-
-def source_undo_label():
-    return f'Undo {_source_undo[-1][0]}' if _source_undo else None
 
 
 def _copy_face(face):
@@ -549,7 +514,7 @@ def _unit_embedding(face_set):
 def combine_photo_sources():
     """Blend the photo sources of the person in use into one faceset (like a
     .fsz: one identity averaged over the photos). Faces of other people (a
-    group photo) and loaded .fsz facesets stay as they are. Undoable."""
+    group photo) and loaded .fsz facesets stay as they are."""
     global active_source
     same = same_person_photos()
     if len(same) < 2:
@@ -559,14 +524,13 @@ def combine_photo_sources():
     combined = FaceSet()
     for i in same:
         # copies: AverageEmbeddings writes the average into faces[0], which
-        # must not change the photo's own source (Undo brings it back)
+        # must not change the photo's own Face object
         combined.faces.extend(_copy_face(f) for f in G.INPUT_FACESETS[i].faces)
         combined.ref_images.extend(G.INPUT_FACESETS[i].ref_images)
     combined.AverageEmbeddings()
     thumb = ui.globals.ui_input_thumbs[a]
     position = same[0]
-    in_use = G.INPUT_FACESETS[a]
-    _source_undo.append(('combine', _take_sources(same), combined, in_use))
+    _take_sources(same)
     G.INPUT_FACESETS.insert(position, combined)
     ui.globals.ui_input_thumbs.insert(position, thumb)
     source_captions.insert(position, f'{len(same)} photos combined')
@@ -595,13 +559,6 @@ def shuffle_sources():
 targets = []                          # see add_targets
 selected_target = None
 _next_target = 0
-_removed_targets = []                 # (label, [(position, entry)]) for Undo
-
-
-def _thumb_dir():
-    folder = os.path.join(os.environ.get('TEMP') or tempfile.gettempdir(), 'faceswap_thumbs')
-    os.makedirs(folder, exist_ok=True)
-    return folder
 
 
 def _probe(path):
@@ -619,14 +576,16 @@ def _probe(path):
     return ('gif' if path.lower().endswith('.gif') else 'video'), frames, fps, frame if ok else None
 
 
-def _write_thumb(t, frame):
-    if frame is None:
-        frame = np.zeros((90, 160, 3), np.uint8)
-    h, w = frame.shape[:2]
-    scale = 240.0 / max(h, w)
-    small = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
-    os.makedirs(os.path.dirname(t['thumb']), exist_ok=True)       # Clean temp removes the folder
-    cv2.imwrite(t['thumb'], small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+def _serve_in_place(path):
+    """A target added by its path (Drive, a local folder) is listed in the
+    file list, and Gradio copies any listed file that is not in its upload
+    cache into that cache (a full copy of a large video, hashed again at every
+    refresh). Serving it as a static file lists it where it is."""
+    temp = os.environ.get('GRADIO_TEMP_DIR') or os.environ.get('TEMP') or ''
+    if temp and os.path.abspath(path).startswith(os.path.abspath(temp) + os.sep):
+        return                                # uploaded: already in Gradio's cache
+    import gradio as gr
+    gr.set_static_paths([path])
 
 
 def add_targets(paths, progress=None):
@@ -651,9 +610,8 @@ def add_targets(paths, progress=None):
             continue
         _next_target += 1
         t = {'id': _next_target, 'path': path, 'name': name, 'kind': kind, 'frames': frames, 'fps': fps,
-             'start': 1, 'end': frames, 'out_fps': 0.0, 'mask': None, 'mask_frame': None,
-             'thumb': os.path.join(_thumb_dir(), f'{_next_target}.jpg')}
-        _write_thumb(t, first)
+             'start': 1, 'end': frames, 'out_fps': 0.0, 'mask': None, 'mask_frame': None}
+        _serve_in_place(path)
         targets.append(t)
         known.add(path)
         if kind == 'video':
@@ -684,24 +642,9 @@ def target(tid=None):
     return next((t for t in targets if t['id'] == tid), None)
 
 
-def targets_gallery():
-    items = []
-    for t in targets:
-        if not os.path.isfile(t['thumb']):
-            _write_thumb(t, _probe(t['path'])[3] if os.path.isfile(t['path']) else None)
-        items.append((t['thumb'], _target_caption(t)))
-    return items
-
-
-def _target_caption(t):
-    parts = [t['name']]
-    if t['kind'] != 'image':
-        parts.append(duration(t['frames'], t['fps']))
-        if (t['start'], t['end']) != (1, t['frames']):
-            parts.append(f"{t['start']}–{t['end']}")
-    if t['mask'] is not None:
-        parts.append('painted')
-    return ' · '.join(parts)
+def target_paths():
+    """The file list's value (the targets, in order)."""
+    return [t['path'] for t in targets]
 
 
 def selected_target_index():
@@ -714,39 +657,22 @@ def select_target(index):
         selected_target = targets[index]['id']
 
 
-def remove_selected_target():
+def remove_target(path):
+    """The × of a file in the list."""
     global selected_target
-    i = selected_target_index()
+    i = next((k for k, t in enumerate(targets) if t['path'] == path), None)
     if i is None:
         return False
-    _removed_targets.append(('remove', [(i, targets.pop(i))]))
-    selected_target = targets[min(i, len(targets) - 1)]['id'] if targets else None
+    removed = targets.pop(i)
+    if removed['id'] == selected_target:
+        selected_target = targets[min(i, len(targets) - 1)]['id'] if targets else None
     return True
 
 
-def clear_targets(undoable=True):
+def clear_targets():
     global selected_target
-    if targets and undoable:
-        _removed_targets.append(('remove all', list(enumerate(targets))))
     targets.clear()
     selected_target = None
-
-
-def undo_targets():
-    """Bring back the files of the last removal. Returns its label or None."""
-    global selected_target
-    if not _removed_targets:
-        return None
-    label, removed = _removed_targets.pop()
-    for position, t in sorted(removed, key=lambda x: x[0]):
-        if all(o['path'] != t['path'] for o in targets):
-            targets.insert(min(position, len(targets)), t)
-    selected_target = removed[0][1]['id'] if target(removed[0][1]['id']) else selected_target
-    return label
-
-
-def undo_label():
-    return f'Undo {_removed_targets[-1][0]}' if _removed_targets else None
 
 
 def clock(frame, fps):
@@ -831,7 +757,6 @@ def process_entries():
 
 # ----------------------------------------------------------------------------- people (Specific people)
 
-selected_person = 0
 
 
 def people_gallery():
@@ -855,14 +780,12 @@ def add_person(face, crop):
     return None
 
 
-def remove_selected_person():
-    global selected_person
-    if not G.TARGET_FACES:
+def remove_person(index):
+    """The × on a picked person's thumbnail."""
+    if not 0 <= index < len(G.TARGET_FACES):
         return False
-    i = min(max(selected_person, 0), len(G.TARGET_FACES) - 1)
-    G.TARGET_FACES.pop(i)
-    ui.globals.ui_target_thumbs.pop(i)
-    selected_person = min(i, len(G.TARGET_FACES) - 1) if G.TARGET_FACES else 0
+    G.TARGET_FACES.pop(index)
+    ui.globals.ui_target_thumbs.pop(index)
     return True
 
 
@@ -1030,7 +953,4 @@ def reset_after_temp_clean():
             prepare_seek_copy(t['path'])         # its quick-seek copy was in the temp folder
     if target() is None:
         selected_target = targets[0]['id'] if targets else None
-    _removed_targets[:] = [(label, [(p, t) for p, t in removed if os.path.isfile(t['path'])])
-                           for label, removed in _removed_targets]
-    _removed_targets[:] = [u for u in _removed_targets if u[1]]
     return [t['name'] for t in gone]
