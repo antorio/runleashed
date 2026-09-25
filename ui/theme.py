@@ -26,7 +26,14 @@ runleashed_theme = gr.themes.Default(
     button_secondary_background_fill="white",
     button_secondary_background_fill_hover="#f9fafb",
     button_secondary_border_color="*neutral_200",
+    button_secondary_border_color_hover="*neutral_300",
+    button_secondary_border_color_hover_dark="*neutral_500",
     button_secondary_text_color="*neutral_700",
+    # without these the dark theme reuses the light values: white buttons, text unreadable
+    button_secondary_background_fill_dark="*neutral_700",
+    button_secondary_background_fill_hover_dark="*neutral_600",
+    button_secondary_border_color_dark="*neutral_600",
+    button_secondary_text_color_dark="*neutral_100",
     block_title_text_weight="600",
     block_label_text_weight="600",
 )
@@ -60,9 +67,9 @@ button.selected { color: var(--primary-600) !important; }
 .block > label > span > svg.svelte-43sxxs, span[data-testid="block-label"] svg, .block-label svg { display: none !important; }
 
 /* ---------- sleeker secondary buttons ---------- */
-button.secondary { background:#fff !important; border:1px solid var(--border-color-primary) !important;
+button.secondary { background: var(--button-secondary-background-fill) !important; border:1px solid var(--border-color-primary) !important;
   color: var(--body-text-color) !important; box-shadow:none !important; font-weight:500 !important; font-size:13px !important; }
-button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !important; }
+button.secondary:hover { background: var(--button-secondary-background-fill-hover) !important; border-color: var(--button-secondary-border-color-hover, var(--border-color-primary)) !important; }
 
 /* ---------- shrink the Source/Target dropzones + show only icon + 'Drop File Here' ----------
    The dropzone text ('Drop File Here', '- or -', 'Click to Upload') is partly bare
@@ -103,19 +110,65 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
 #status_line:has(> .wrap:not(.hide)) { min-height: 72px !important; }
 #range_line, #range_line * { color: var(--body-text-color-subdued) !important; }
 
-/* ---------- Face Swap: compact spacing (1920x1080 target) ---------- */
-#fs_left, #center_stage, #fs_settings { gap: 8px !important; }
+/* ---------- Face Swap: compartments ----------
+   One box per compartment and nothing boxed inside it: Gradio draws a border
+   around every block and a grey .form behind side-by-side blocks, whose gap
+   showed as thick grey bars. Inside a box one spacing is used for everything;
+   the boxes of a column touch; related buttons are one group. */
+:root { --fs-gap: 8px; }
 #swap_row { gap: 12px !important; }
-#fs_settings .gradio-accordion > div, #fs_settings .form { gap: 8px !important; }
+#fs_left, #fs_settings { gap: 0 !important; }
+.fs-box { border: 1px solid var(--border-color-primary) !important; border-radius: 0 !important;
+  background: var(--block-background-fill) !important; box-shadow: none !important; padding: 10px 12px !important; }
+#fs_left > .fs-box + .fs-box, #fs_settings > .fs-box + .fs-box { margin-top: -1px !important; }
+.fs-box.fs-first { border-top-left-radius: 10px !important; border-top-right-radius: 10px !important; }
+.fs-box.fs-last { border-bottom-left-radius: 10px !important; border-bottom-right-radius: 10px !important; }
+.fs-box > .label-wrap { margin: 0 !important; }
+.fs-box > .label-wrap.open { margin-bottom: var(--fs-gap) !important; }
+.fs-box .block, .fs-box .form { border: none !important; box-shadow: none !important; background: transparent !important;
+  border-radius: 0 !important; }
+.fs-box .block { padding: 0 !important; }
+.fs-box .column, .fs-box .row, .fs-box .form, #center_stage.fs-box { gap: var(--fs-gap) 12px !important; }
+/* a row whose items are all hidden takes no room (it used to add an empty gap) */
+.fs-box .row:not(:has(> :not(.hidden):not(.hide))) { display: none !important; }
+#defaults_bar { margin-top: var(--fs-gap) !important; gap: 6px !important; }
+/* lists: a soft well; drop zones: dashed; a file list: a plain frame */
+.fs-box #src_gal.block, .fs-box #people_gal.block, .fs-box #picker_gal.block {
+  background: var(--background-fill-secondary) !important; border-radius: 8px !important; }
+.fs-box #src_drop.block, .fs-box #tgt_files.block { border: 1px dashed var(--border-color-primary) !important;
+  border-radius: 8px !important; }
+.fs-box #tgt_files.block:has(table) { border-style: solid !important; }
+/* button groups: touching, one outline */
+.fs-box .fs-seg, .fs-box .row.fs-seg { gap: 0 !important; flex-wrap: nowrap !important; }
+.fs-seg > button { border-radius: 0 !important; margin-left: -1px !important; }
+.fs-seg > button:first-child { border-radius: 8px 0 0 8px !important; margin-left: 0 !important; }
+.fs-seg > button:last-child { border-radius: 0 8px 8px 0 !important; }
+/* text fields keep their own outline (the block around them has none now) */
+.fs-box input[type="text"], .fs-box textarea { border: 1px solid var(--input-border-color) !important;
+  border-radius: 8px !important; background: var(--input-background-fill) !important; padding: 6px 10px !important; }
+/* path + Add: one field */
+.fs-box .fs-path, .fs-box .row.fs-path { gap: 0 !important; flex-wrap: nowrap !important; }
+.fs-path input, .fs-path textarea { border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important; }
+.fs-path > button { border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important; margin-left: -1px !important; }
 .fs-buttons { gap: 6px !important; }
-.fs-path { gap: 6px !important; }
-#people_col { gap: 6px !important; }
-#view_bar, #frame_bar { align-items: center !important; gap: 6px !important; }
+#view_bar, #frame_bar { align-items: center !important; }
 #view_radio .wrap { gap: 4px !important; }
 #view_radio label { padding: 4px 10px !important; }
-#range_bar { align-items: center !important; gap: 6px !important; flex-wrap: nowrap !important; }
+#range_bar { align-items: center !important; flex-wrap: nowrap !important; }
 #range_bar #range_line { flex: 1 1 auto !important; min-width: 0 !important; }
-.fs-checks { gap: 6px !important; }
+#range_bar > #range_buttons { flex: 0 0 auto !important; width: auto !important; }
+#range_buttons > button { flex: 0 0 auto !important; min-width: 0 !important; padding: 0 12px !important; }
+#crop_row { flex-wrap: nowrap !important; }
+#crop_row > * { min-width: 0 !important; }
+/* slider heads: the number always sits on the label's line (Gradio drops it
+   below when the label is long, so side-by-side sliders looked different) */
+/* galleries: a scrollbar only when the photos overflow (Gradio always shows a 15px track) */
+.fs-box .grid-wrap { overflow-y: auto !important; }
+#fs_left .head, #fs_settings .head { flex-wrap: nowrap !important; gap: 6px !important; }
+#fs_left .head > label, #fs_settings .head > label { min-width: 0 !important; flex: 1 1 auto !important; }
+#fs_left .head .tab-like-container, #fs_settings .head .tab-like-container { flex: 0 0 auto !important; }
+#fs_left .head input[type="number"], #fs_settings .head input[type="number"] {
+  width: 48px !important; min-width: 0 !important; padding: 4px 6px !important; }
 /* an empty gallery draws a 236px placeholder: keep the lists their own size */
 #src_gal .empty { min-height: 0 !important; height: 146px !important; }
 #people_gal .empty { min-height: 0 !important; height: 90px !important; }
@@ -146,7 +199,7 @@ button.secondary:hover { background:#f9fafb !important; border-color:#d1d5db !im
    Gradio groups the 3 adjacent checkboxes into a .form wrapper that wraps at 2.
    Force that .form (and its children) to a single nowrap flex row. */
 #expr_checks .form, #expr_checks > div {
-  display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; gap: 4px !important; }
+  display: flex !important; flex-direction: row !important; flex-wrap: nowrap !important; gap: 12px !important; }
 #expr_checks .form > *, #expr_checks > div > * { flex: 1 1 0 !important; min-width: 0 !important; }
 #expr_checks label { white-space: nowrap !important; }
 
@@ -235,9 +288,9 @@ runleashed_js = """
         const src = document.getElementById('src_gal');
         const mode = document.querySelector('#mode_dd input');
         if (src && mode) src.classList.toggle('fs-numbered', (mode.value || '').startsWith('One source'));
-        // mark the target file the preview shows (its label starts with the name)
-        const label = document.querySelector('#preview_img [data-testid="block-label"]');
-        const shown = label ? label.innerText.split(' · ')[0].split(' — ')[0].trim() : '';
+        // mark the target file the preview shows (its name: a hidden field)
+        const field = document.querySelector('#tgt_shown textarea, #tgt_shown input');
+        const shown = field ? field.value : '';
         document.querySelectorAll('#tgt_files tr.file').forEach((row) => {
             const cell = row.querySelector('td.filename');
             row.classList.toggle('fs-shown', !!cell && cell.getAttribute('aria-label') === shown);
