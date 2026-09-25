@@ -250,6 +250,59 @@ runleashed_js = """
         btn.click();
     });
 
+    // The path boxes start with a folder (Settings): after the click (or Tab)
+    // that focuses one, typing continues after that folder, wherever the
+    // click landed. The caret is moved on the click and again right before the
+    // first key or text goes in (a timer would lose to fast typing). A click
+    // in a box that already has the focus, or an arrow key, is left alone.
+    const pathBox = (t) => (t && t.closest && ['INPUT', 'TEXTAREA'].includes(t.tagName)
+                            && t.closest('#src_path, #tgt_path')) ? t : null;
+    const toEnd = (el) => {
+        const n = el.value.length;
+        try { el.setSelectionRange(n, n); } catch (err) {}
+        el.scrollLeft = el.scrollWidth;
+    };
+    const endOnce = (el) => {
+        if (!el || el.dataset.fsEnd !== '1') return;
+        delete el.dataset.fsEnd;
+        toEnd(el);
+    };
+    document.addEventListener('mousedown', (e) => {
+        const el = pathBox(e.target);
+        if (!el) return;
+        if (document.activeElement !== el) el.dataset.fsEnd = '1';
+        else delete el.dataset.fsEnd;
+    }, true);
+    document.addEventListener('click', (e) => {
+        const el = pathBox(e.target);
+        if (!el || el.dataset.fsEnd !== '1') return;
+        if (el.selectionStart === el.selectionEnd) toEnd(el);
+        else delete el.dataset.fsEnd;       // the focusing click dragged a selection: keep it
+    });
+    document.addEventListener('keydown', (e) => {
+        const el = pathBox(e.target);
+        if (!el) return;
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) delete el.dataset.fsEnd;
+        else endOnce(el);
+    }, true);
+    document.addEventListener('beforeinput', (e) => endOnce(pathBox(e.target)), true);
+    // Tab into a box (Chrome would select the whole path); not when the box
+    // only gets its focus back with the window (or the Colab frame)
+    let windowBlurredOn = null;
+    window.addEventListener('blur', () => { windowBlurredOn = document.activeElement; });
+    document.addEventListener('focusin', (e) => {
+        const el = pathBox(e.target);
+        const refocus = el && el === windowBlurredOn;
+        windowBlurredOn = null;
+        if (!el || refocus || el.dataset.fsEnd === '1') return;
+        el.dataset.fsEnd = '1';             // fast typing beats the timer: keydown moves it too
+        setTimeout(() => toEnd(el), 0);
+    });
+    document.addEventListener('focusout', (e) => {
+        const el = pathBox(e.target);
+        if (el) delete el.dataset.fsEnd;
+    });
+
     // × on each source and picked-person thumbnail. A click on it sends
     // "index:time" through a hidden textbox (its .input event runs the
     // removal on the server) and never reaches the thumbnail (no select).

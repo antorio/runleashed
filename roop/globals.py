@@ -55,7 +55,9 @@ identity_strength = 0.0
 face_shape_strength = 0.0
 face_swap_mode = None
 blend_ratio = 0.5
-distance_threshold = 0.65
+# Specific people: max cosine distance for a face to count as a picked person
+# (user default 0.8, 26 Sep; was 0.65). ProcessMgr.match_selected_faces.
+distance_threshold = 0.8
 # Face detector settings (live -- see get_face_analyser).
 # det_thresh: confidence a detection must reach to be accepted. insightface's
 # default is 0.5; faces sitting right at the threshold flicker in and out
@@ -139,7 +141,7 @@ faceset_outlier_threshold = 0.6
 # LivePortrait expression restorer (optional, faceswap tab). Re-injects the
 # target's real expression onto the swapped face. Off by default (heavy model).
 expression_restorer = False
-expression_restorer_factor = 80     # 0-300 -> blend amount (100 = target amount)
+expression_restorer_factor = 100    # 0-500 -> blend amount (100 = target amount; user default, was 80)
 expression_restore_eyes = True
 expression_restore_mouth = True
 expression_restore_brows = True

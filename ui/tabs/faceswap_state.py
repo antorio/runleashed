@@ -75,7 +75,9 @@ def is_source_file(path):
 # ----------------------------------------------------------------------------- settings
 
 # key -> initial value: the old panel's defaults (the engine globals for the
-# settings that were bound to one), so the default output is unchanged
+# settings that were bound to one), so the default output is unchanged --
+# except two the user changed on 26 Sep (roop/globals.py): Match tolerance
+# 0.65 -> 0.8 (Specific people only) and ER strength 80 -> 100 (ER is off)
 FACTORY = {
     # faces to replace
     'mode': 'Largest face', 'tolerance': G.distance_threshold,
@@ -402,11 +404,29 @@ def add_sources(paths, progress=None):
     return messages
 
 
+def path_start():
+    """What the path boxes start with: the Settings folder (path_start, Colab's
+    Drive folder by default) when it exists here, else nothing."""
+    folder = os.path.expanduser(str(getattr(G.CFG, 'path_start', '') or '').strip())
+    if not folder or not os.path.isdir(folder):
+        return ''
+    return folder if folder.endswith(tuple(filter(None, (os.sep, os.altsep)))) else folder + os.sep
+
+
+def _only_path_start(path):
+    """The box still holds just the start folder (by default also the output
+    folder): Add / Enter must not add everything in it."""
+    start = path_start()
+    return bool(start) and os.path.normpath(path) == os.path.normpath(start)
+
+
 def add_source_path(path):
     """A .fsz / photo file, or a folder of them (not recursive)."""
     path = (path or '').strip()
     if not path:
         return ['Type the path of a faceset, a photo or a folder']
+    if _only_path_start(path):
+        return [f'Type the name of the faceset, photo or folder after {path_start()}']
     if os.path.isfile(path):
         return add_sources([path]) if is_source_file(path) else [f'Not a photo or faceset: {path}']
     if os.path.isdir(path):
@@ -627,6 +647,8 @@ def add_target_path(path):
     path = (path or '').strip()
     if not path:
         return ['Type the path of a file or a folder']
+    if _only_path_start(path):
+        return [f'Type the name of the file or folder after {path_start()}']
     if os.path.isfile(path):
         return add_targets([path])
     if os.path.isdir(path):
@@ -854,7 +876,7 @@ def readiness():
         problems.append('add a target file')
     mode = values['mode']
     if MODES[mode] == 'selected' and not G.TARGET_FACES:
-        problems.append('pick the faces with "Use face from this frame"')
+        problems.append('pick the faces with "Use face from the frame"')
     if problems:
         return False, 'To start: ' + ', '.join(problems) + '.'
     images = [t for t in targets if t['kind'] == 'image']

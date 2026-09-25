@@ -151,6 +151,54 @@ class FrameSequencer():
                 self._cond.notify_all()
 
 
+# Two picks this close are the same person (picked from two frames). It is the
+# old default tolerance: what the app has always counted as "that person". In
+# the test scene one person's picks were <= 0.44 apart, different people >= 0.78.
+SAME_PICK_DISTANCE = 0.65
+
+
+def match_selected_faces(target_faces, faces, threshold):
+    """Specific people: which detected faces to swap, as indices into `faces`.
+
+    Each pick (a picked person) takes the detected face closest to it within
+    the tolerance (cosine distance <= threshold); picks with the closest match
+    go first. A pick whose closest face is already taken
+      - by a pick of the same person (the same person picked twice, from
+        two frames: the picks are within SAME_PICK_DISTANCE, or within a
+        tighter tolerance) takes nothing, so it does not grab somebody else's
+        face;
+      - by a clearly different pick, takes its next closest free face within
+        the tolerance.
+    The result is in the order of the picks, the order the faces were
+    processed in before.
+
+    It used to take the LEFT-MOST free face within the tolerance: with a
+    loose tolerance a different person further left was swapped (6-person
+    clip at 0.8: the wrong person in 29 of 29 frames; 0 at 0.65), and a second
+    pick of the same person took somebody else's face. When each pick has at
+    most one face within the tolerance and no face is within it for two picks,
+    the choice is the same as before."""
+    dist = [[float(compute_cosine_distance(tf.embedding, face.embedding)) for face in faces]
+            for tf in target_faces]
+    order = sorted((i for i in range(len(target_faces)) if dist[i]),
+                   key=lambda i: (min(dist[i]), i))
+    owner = {}                              # face index -> pick index
+    for ti in order:
+        for fi in sorted(range(len(faces)), key=lambda f: (dist[ti][f], f)):
+            if dist[ti][fi] > threshold:
+                break
+            other = owner.get(fi)
+            if other is None:
+                owner[fi] = ti
+                break
+            same_person = float(compute_cosine_distance(target_faces[ti].embedding, target_faces[other].embedding)) \
+                <= min(threshold, SAME_PICK_DISTANCE)
+            if same_person:
+                break
+    claimed = {ti: fi for fi, ti in owner.items()}
+    return [claimed[ti] for ti in sorted(claimed)]
+
+
 class ProcessMgr():
     input_face_datas = []
     target_face_datas = []
@@ -798,23 +846,14 @@ class ProcessMgr():
                 # and why the same clip looked different between modes (a DIFFERENT
                 # SOURCE FACE was applied, which reads as "different landmarking").
                 # The 1:1 pairing behaviour still exists as its own mode: all_input.
-                num_targetfaces = len(self.target_face_datas)
                 idx = self.options.selected_index
                 if idx >= len(self.input_face_datas):
                     idx = 0
-                swapped_faces = []
-                for tf in self.target_face_datas:
-                    for face in faces:
-                        if any(face is s for s in swapped_faces):
-                            continue    # never swap the same detected face twice
-                        if compute_cosine_distance(tf.embedding, face.embedding) <= self.options.face_distance_threshold:
-                            if len(self.input_face_datas) > 0:
-                                temp_frame = self.process_face(idx, face, temp_frame)
-                                swapped_faces.append(face)
-                                num_faces_found += 1
-                            break       # this target handled, move to the next
-                    if not roop.globals.vr_mode and num_faces_found == num_targetfaces:
-                        break
+                if len(self.input_face_datas) > 0:
+                    for fi in match_selected_faces(self.target_face_datas, faces,
+                                                   self.options.face_distance_threshold):
+                        temp_frame = self.process_face(idx, faces[fi], temp_frame)
+                        num_faces_found += 1
             elif self.options.swap_mode == "all_female" or self.options.swap_mode == "all_male":
                 gender = 'F' if self.options.swap_mode == "all_female" else 'M'
                 for face in faces:

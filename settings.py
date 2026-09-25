@@ -40,6 +40,9 @@ class Settings:
         self.output_show_video = self.default_get(data, 'output_show_video', True)
         self.launch_browser = self.default_get(data, 'launch_browser', True)
         self.allowed_paths = self.default_get(data, 'allowed_paths', ['/content/drive/'])
+        # Face Swap: the source / target path boxes start with this folder
+        # (only where it exists, so a local machine gets empty boxes)
+        self.path_start = self.default_get(data, 'path_start', '/content/drive/MyDrive/c/')
 
 
 
@@ -64,7 +67,8 @@ class Settings:
             'output_folder' : self.output_folder,
             'use_os_temp_folder' : self.use_os_temp_folder,
             'output_show_video' : self.output_show_video,
-            'allowed_paths' : self.allowed_paths
+            'allowed_paths' : self.allowed_paths,
+            'path_start' : self.path_start
         }
         with open(self.config_file, 'w') as f:
             yaml.dump(data, f)

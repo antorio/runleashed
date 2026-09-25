@@ -33,6 +33,7 @@ def settings_tab():
                 with gr.Accordion("Output", open=True):
                     output_template = gr.Textbox(label="Filename Output Template", info="(file extension is added automatically)", lines=1, placeholder='{file}_{time}', value=roop.globals.CFG.output_template)
                     output_folder_box = gr.Textbox(label="Output Folder", info="Where results are saved", lines=1, placeholder='/content/drive/MyDrive/c', value=getattr(roop.globals.CFG, 'output_folder', '/content/drive/MyDrive/c'))
+                    path_start_box = gr.Textbox(label="Face Swap path boxes start with", info="Filled in when this folder exists (next page load)", lines=1, placeholder='/content/drive/MyDrive/c/', value=getattr(roop.globals.CFG, 'path_start', ''))
                     settings_controls.append(gr.Dropdown(image_formats, label="Image Output Format", value=roop.globals.CFG.output_image_format, elem_id='output_image_format', interactive=True))
                     settings_controls.append(gr.Dropdown(video_codecs, label="Video Codec", value=roop.globals.CFG.output_video_codec, elem_id='output_video_codec', interactive=True))
                     settings_controls.append(gr.Dropdown(video_formats, label="Video Output Format", value=roop.globals.CFG.output_video_format, elem_id='output_video_format', interactive=True))
@@ -83,6 +84,7 @@ def settings_tab():
     for _sl, _nm in accuracy_sliders:
         _sl.release(fn=lambda v, n=_nm: on_global_value_changed(v, n), inputs=[_sl])
     output_folder_box.change(fn=on_output_folder_changed, inputs=[output_folder_box])
+    path_start_box.change(fn=on_path_start_changed, inputs=[path_start_box])
 
     # Settings
     for s in settings_controls:
@@ -115,6 +117,11 @@ def on_output_folder_changed(folder):
         os.makedirs(folder, exist_ok=True)
     except Exception:
         pass
+
+
+def on_path_start_changed(folder):
+    if roop.globals.CFG is not None:
+        roop.globals.CFG.path_start = (folder or '').strip()
 
 
 def on_option_changed(evt: gr.SelectData):

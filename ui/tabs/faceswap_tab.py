@@ -157,8 +157,9 @@ def faceswap_tab():
                                                          visible=S.MODES[V['mode']] == 'all_input' and len(G.INPUT_FACESETS) > 1)
                     C['src_drop'] = gr.Files(show_label=False, file_count="multiple", file_types=None, elem_id="src_drop")
                     with gr.Row(equal_height=True, elem_classes="fs-path"):
-                        C['src_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                                   placeholder="or a path: .fsz, photo or folder (Enter)")
+                        C['src_path'] = gr.Textbox(value=S.path_start(), show_label=False, container=False, scale=5,
+                                                   max_lines=1, placeholder="or a path: .fsz, photo or folder (Enter)",
+                                                   elem_id="src_path")
                         C['btn_src_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
                 with gr.Accordion(_title("Target files", 'targets'), open=True, elem_classes="fs-box") as acc_tgt:
@@ -170,8 +171,9 @@ def faceswap_tab():
                     C['tgt_shown'] = gr.Textbox(value=(t or {}).get('name', ''), elem_id="tgt_shown", elem_classes="fs-hidden",
                                                 show_label=False, container=False)
                     with gr.Row(equal_height=True, elem_classes="fs-path"):
-                        C['tgt_path'] = gr.Textbox(show_label=False, container=False, scale=5, max_lines=1,
-                                                   placeholder="or a path: file or folder (Enter)")
+                        C['tgt_path'] = gr.Textbox(value=S.path_start(), show_label=False, container=False, scale=5,
+                                                   max_lines=1, placeholder="or a path: file or folder (Enter)",
+                                                   elem_id="tgt_path")
                         C['btn_tgt_path'] = gr.Button("Add", size="sm", scale=1, min_width=60)
 
                 with gr.Accordion(_title("Faces to replace", 'faces'), open=True, elem_classes="fs-box") as acc_faces:
@@ -180,7 +182,7 @@ def faceswap_tab():
                         mode = _s('mode', gr.Dropdown(list(S.MODES), value=V['mode'], show_label=False, container=False,
                                                       scale=3, elem_id="mode_dd"))
                         # one face in the frame: it is added right away; several: pick one below
-                        C['btn_use_face'] = gr.Button("Use face from this frame", size="sm", scale=2, min_width=150)
+                        C['btn_use_face'] = gr.Button("Use face from the frame", size="sm", scale=2, min_width=150)
                     with gr.Column(visible=False, elem_id="picker_col") as picker_col:
                         C['picker_col'] = picker_col
                         with gr.Row(equal_height=True):
@@ -296,19 +298,16 @@ def faceswap_tab():
                     _s('color_transfer', gr.Checkbox(value=V['color_transfer'], label="Match colours to target"))
 
                 with gr.Accordion(f"Enhance · {S.summary('enhance')}", open=False, elem_classes="fs-box") as acc_enh:
-                    enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Enhancer", show_label=False))
-                    with gr.Column(visible=V['enhancer'] != 'None') as enh_col:
-                        _s('enhancer_blend', gr.Slider(0.0, 1.0, value=V['enhancer_blend'], step=0.01, label="Strength"))
+                    with gr.Row(equal_height=True, elem_id="enh_row"):
+                        enh = _s('enhancer', gr.Dropdown(list(S.ENHANCERS), value=V['enhancer'], label="Enhancer",
+                                                         show_label=False))
+                        with gr.Column(visible=V['enhancer'] != 'None', min_width=160) as enh_col:
+                            _s('enhancer_blend', gr.Slider(0.0, 1.0, value=V['enhancer_blend'], step=0.01, label="Strength"))
+                    with gr.Column(visible=V['enhancer'] != 'None') as enh_after_col:
+                        C['enh_after_col'] = enh_after_col
                         _s('mask_after_enhancer', gr.Checkbox(value=V['mask_after_enhancer'], label="Occlusion mask after enhancer"))
 
                 with gr.Accordion(f"Detection & tracking · {S.summary('detection')}", open=False, elem_classes="fs-box") as acc_det:
-                    with gr.Row():
-                        _s('det_thresh', gr.Slider(0.10, 0.90, value=V['det_thresh'], step=0.01, label="Detection confidence"))
-                        _s('det_size', gr.Dropdown([320, 640, 1024], value=V['det_size'], label="Detection size"))
-                    C['multi_angle'] = _s('multi_angle', gr.Dropdown(list(S.MULTI_ANGLE), value=V['multi_angle'], label="Rotated faces"))
-                    with gr.Column(visible=S.MULTI_ANGLE[V['multi_angle']] == 'always') as upright_col:
-                        C['upright_col'] = upright_col
-                        _s('upright', gr.Slider(0.0, 1.0, value=V['upright'], step=0.05, label="Upright priority"))
                     with gr.Row(elem_classes="fs-checks"):
                         _s('autorotate', gr.Checkbox(value=V['autorotate'], label="Auto-rotate lying faces"))
                         lmk = _s('lmk_align', gr.Checkbox(value=V['lmk_align'], label="68-point alignment"))
@@ -325,6 +324,13 @@ def faceswap_tab():
                             _s('smoothing_strength', gr.Slider(0.0, 1.0, value=V['smoothing_strength'], step=0.05, label="Strength"))
                             _s('smoothing_deadzone', gr.Slider(0.0, 0.03, value=V['smoothing_deadzone'], step=0.001,
                                                                label="Still-face threshold"))
+                    C['multi_angle'] = _s('multi_angle', gr.Dropdown(list(S.MULTI_ANGLE), value=V['multi_angle'], label="Rotated faces"))
+                    with gr.Column(visible=S.MULTI_ANGLE[V['multi_angle']] == 'always') as upright_col:
+                        C['upright_col'] = upright_col
+                        _s('upright', gr.Slider(0.0, 1.0, value=V['upright'], step=0.05, label="Upright priority"))
+                    with gr.Row():
+                        _s('det_thresh', gr.Slider(0.10, 0.90, value=V['det_thresh'], step=0.01, label="Detection confidence"))
+                        _s('det_size', gr.Dropdown([320, 640, 1024], value=V['det_size'], label="Detection size"))
 
                 with gr.Accordion(f"Video output · {S.summary('video')}", open=False, elem_classes="fs-box fs-last") as acc_vid:
                     method = _s('method', gr.Radio([(S.METHOD_MEMORY, S.METHOD_MEMORY),
@@ -373,6 +379,7 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     er.change(None, [er], [er_col], js=show('v'), **INTERNAL)
     engine.change(None, [engine], [clip_col], js=show("v === 'Clip2Seg (by text)'"), **INTERNAL)
     enh.change(None, [enh], [enh_col], js=show("v !== 'None'"), **INTERNAL)
+    enh.change(None, [enh], [C['enh_after_col']], js=show("v !== 'None'"), **INTERNAL)
     lmk.change(None, [lmk], [lmk_col], js=show('v'), **INTERNAL)
     sm.change(None, [sm], [sm_col], js=show('v'), **INTERNAL)
     method.change(None, [method], [keep_col], js=show(f"v === '{S.METHOD_EXTRACT}'"), **INTERNAL)
@@ -423,7 +430,7 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['btn_whole'].click(lambda f: on_range('whole', f), [C['frame']], range_out, **one)
     C['out_fps'].input(on_out_fps, [C['out_fps']], None, **one)
 
-    # people: "Use face from this frame", the picker for several faces, the × on each
+    # people: "Use face from the frame", the picker for several faces, the × on each
     use_out = [mode, C['picker_col'], C['picker_gal'], C['people_gal'], C['ready_md'], tick]
     C['btn_use_face'].click(on_use_face, [C['frame'], tick], use_out, **slow)
     C['picker_gal'].select(on_pick_face, [tick], use_out, **one)
@@ -459,11 +466,11 @@ def register_load(ui):
     """Page load: show the server's state (sources, targets, people, the last
     applied settings), not the build-time values."""
     keys = list(settings)
-    outputs = [settings[k] for k in keys] + refresh_outputs()
+    outputs = [settings[k] for k in keys] + refresh_outputs() + [C['src_path'], C['tgt_path']]
 
     def on_load():
         _page_loaded()
-        return [S.values[k] for k in keys] + refresh_values()
+        return [S.values[k] for k in keys] + refresh_values() + [S.path_start()] * 2
     ui.load(on_load, None, outputs, show_progress="hidden", **INTERNAL).then(
         src_highlight, None, C['src_gal'], show_progress="hidden", **INTERNAL)
 
@@ -601,8 +608,9 @@ def on_tgt_upload(files, tick, progress=gr.Progress()):
 
 
 def _clear_found_path(path):
-    """Empty the path box once its path was added; a wrong path stays to be fixed."""
-    return '' if os.path.exists((path or '').strip()) else gr.skip()
+    """Back to the start folder once the path was added; a wrong path stays to
+    be fixed."""
+    return S.path_start() if os.path.exists((path or '').strip()) else gr.skip()
 
 
 def on_tgt_path(path, tick):

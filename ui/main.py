@@ -63,7 +63,7 @@ def run():
     print(f'Using provider {roop.globals.execution_providers} - Device:{gputype}')
 
     # Download (first run) and build the face analyser in the background while
-    # the UI starts, so the first preview / "Use face from this frame" finds it
+    # the UI starts, so the first preview / "Use face from the frame" finds it
     # ready. The analyser lock makes any early click wait for it instead of
     # starting a second download.
     def _warm_up():
