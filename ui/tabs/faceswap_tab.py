@@ -556,13 +556,15 @@ def _src_updates():
             gr.Markdown(S.readiness()[1])]
 
 
-_listed_targets = set()        # the target paths last sent to the page's file list
+_sent_targets = []             # the target lists last sent to the page's file list, newest last
 
 
 def _tgt_updates():
     t = S.target()
-    _listed_targets.clear()
-    _listed_targets.update(S.target_paths())
+    paths = S.target_paths()
+    if not _sent_targets or _sent_targets[-1] != paths:
+        _sent_targets.append(list(paths))
+        del _sent_targets[:-10]
     video = t is not None and t['kind'] != 'image'
     frames = t['frames'] if video else 2
     return [gr.Files(value=S.target_paths() or None), gr.Textbox(value=t['name'] if t else ''),
@@ -692,11 +694,22 @@ def on_tgt_select(evt: gr.SelectData, tick):
 
 
 def on_tgt_delete(files, tick):
-    """A × in the list: the files still listed stay, the others go."""
+    """A × in the list: the file the page took out goes."""
     remaining = {f.name if hasattr(f, 'name') else str(f) for f in (files or [])}
-    # only files the page had been shown: a file whose Add is still running
-    # is not in the page's list yet and must not be taken for a removed one
-    for path in [p for p in S.target_paths() if p not in remaining and p in _listed_targets]:
+    # the list the page showed when the × was clicked: the newest list sent to
+    # it that is one file more than what it has now, looking back only past
+    # Adds. A file whose Add finished in the meantime is only in the newer
+    # lists and stays (it was taken for a removed one when the newest list was
+    # used). Otherwise (several × in one go): the newest list.
+    lists = [set(l) for l in reversed(_sent_targets)]
+    back = [lists[0]] if lists else []
+    for older in lists[1:]:
+        if not older <= back[-1]:
+            break
+        back.append(older)
+    shown = next((l for l in back if remaining <= l and len(l - remaining) == 1),
+                 next((l for l in lists if remaining <= l), set()))
+    for path in [p for p in S.target_paths() if p in shown - remaining]:
         S.remove_target(path)
     # the whole list back: a second × while the first was pending was dropped
     # by the page, so page and server could disagree
