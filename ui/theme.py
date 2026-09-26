@@ -1,18 +1,18 @@
 """
-Gradio theme + CSS + load-JS for the redesigned roop-unleashed UI.
+Gradio theme + CSS + load-JS for the redesigned Unleashed UI.
 Tuned against Gradio 5.9.1.
 
 Exports:
-  runleashed_theme  -> pass as theme=
-  runleashed_css    -> pass as css=
-  runleashed_js     -> pass as js=   (runs on app load; this is where the sticky
+  unleashed_theme  -> pass as theme=
+  unleashed_css    -> pass as css=
+  unleashed_js     -> pass as js=   (runs on app load; this is where the sticky
                                        center column lives — head=<script> does NOT
                                        reliably execute in Gradio, js= does)
 """
 
 import gradio as gr
 
-runleashed_theme = gr.themes.Default(
+unleashed_theme = gr.themes.Default(
     primary_hue="orange",
     secondary_hue="orange",
     neutral_hue="gray",
@@ -38,7 +38,7 @@ runleashed_theme = gr.themes.Default(
     block_label_text_weight="600",
 )
 
-runleashed_css = """
+unleashed_css = """
 /* ---------- width: fill the page ---------- */
 .gradio-container { max-width: 1840px !important; width: 96% !important; margin: 0 auto !important; }
 
@@ -172,7 +172,7 @@ button.secondary:hover { background: var(--button-secondary-background-fill-hove
 /* an empty gallery draws a 236px placeholder: keep the lists their own size */
 #src_gal .empty { min-height: 0 !important; height: 146px !important; }
 #people_gal .empty { min-height: 0 !important; height: 90px !important; }
-/* the × on each source / picked person (added by runleashed_js) */
+/* the × on each source / picked person (added by unleashed_js) */
 .fs-hidden { display: none !important; }
 .fs-x { position: absolute; top: 3px; right: 3px; z-index: 3; width: 20px; height: 20px; border-radius: 50%;
   background: rgba(0, 0, 0, .6); color: #fff; font-size: 15px; line-height: 19px; text-align: center;
@@ -184,10 +184,28 @@ button.secondary:hover { background: var(--button-secondary-background-fill-hove
 #src_gal.fs-numbered .thumbnail-item::before { content: counter(fs-src); position: absolute; top: 3px; left: 3px; z-index: 3;
   min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--color-accent); color: #fff;
   font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
-/* target list: the file shown in the preview is marked (runleashed_js) */
+/* target list: the file shown in the preview is marked (unleashed_js) */
 #tgt_files tr.file { cursor: pointer; }
 #tgt_files tr.file.fs-shown { background: var(--color-accent-soft) !important; box-shadow: inset 3px 0 0 var(--color-accent); }
 #tgt_files tr.file.fs-shown .stem { font-weight: 600; }
+
+/* preview badge: updating / updated (unleashed_js); over the picture, no layout */
+#preview_img { position: relative; }
+.fs-pbadge { position: absolute; left: 10px; bottom: 10px; z-index: 6; padding: 3px 9px; border-radius: 999px;
+  background: rgba(17, 24, 39, .72); color: #fff; font-size: 12px; line-height: 18px; white-space: nowrap;
+  pointer-events: auto; user-select: none; -webkit-user-select: none; transition: opacity .6s ease;
+  max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; }
+.fs-pbadge:empty, .fs-pbadge.fs-off { display: none; }
+.fs-pbadge.fs-busy::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 6px;
+  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%;
+  vertical-align: -1px; animation: fs-spin .8s linear infinite; }
+@keyframes fs-spin { to { transform: rotate(360deg); } }
+.fs-pbadge.fs-done { background: rgba(21, 128, 61, .85); }
+.fs-pbadge.fs-warn { background: rgba(180, 83, 9, .88); }
+.fs-pbadge.fs-dim { opacity: .45; }
+.fs-pbadge.fs-dim:hover { opacity: 1; }
+.fs-pbadge.fs-can-compare { cursor: pointer; }
+.fs-pprev { position: absolute; z-index: 5; object-fit: fill; pointer-events: none; }
 .fs-checks label { white-space: nowrap !important; }
 /* Gradio dims a Markdown to 20% while any event writing it runs; the readiness
    line is refreshed by every preview, so it was faded most of the time */
@@ -230,7 +248,7 @@ footer { display: none !important; }
 
 # Runs on app load (gr.Blocks(js=...)). The centre column used to follow the
 # scroll with a requestAnimationFrame loop; CSS sticky does it now.
-runleashed_js = """
+unleashed_js = """
 () => {
     // Face Swap: the arrow keys step the preview frame (like its ◀ ▶ buttons)
     // unless the focus is in a text field or a slider being dragged.
@@ -356,5 +374,110 @@ runleashed_js = """
         setTimeout(() => { queued = false; tidy(); }, 60);
     }).observe(document.body, {childList: true, subtree: true, characterData: true});
     setInterval(tidy, 1000);        // the dropdown's value is no DOM mutation
+
+    // Preview badge (bottom left of the preview): "Updating… n s" from the
+    // moment a change asks for a new preview (the hidden tick moves, or
+    // Refresh) until the answer for the LATEST tick arrives, then "Updated in
+    // n s" and how the picture differs from the previous one of the same
+    // file, frame and view (measured on the server: "no change", "n %
+    // changed"). It then dims and stays; press and hold it to see the previous
+    // picture.
+    const val = (sel) => { const el = document.querySelector(sel); return el ? el.value : null; };
+    const pv = {tick: null, answer: null, pending: false, t0: 0, dimTimer: null, shown: []};
+    const shownImage = () => {
+        const img = document.querySelector('#preview_img img[src]');
+        return img && img.complete && img.naturalWidth ? img : null;
+    };
+    const badge = () => {
+        const block = document.getElementById('preview_img');
+        if (!block) return null;
+        let b = block.querySelector(':scope > .fs-pbadge');
+        if (!b) {
+            b = document.createElement('div');
+            b.className = 'fs-pbadge fs-off';
+            block.appendChild(b);
+            const hold = (on) => (e) => {
+                block.querySelectorAll('.fs-pprev').forEach((x) => x.remove());
+                if (!on || !b.classList.contains('fs-can-compare') || pv.shown.length < 2) return;
+                e.preventDefault();
+                const img = shownImage();
+                if (!img) return;
+                const r = img.getBoundingClientRect(), br = block.getBoundingClientRect();
+                const o = document.createElement('img');
+                o.className = 'fs-pprev';
+                o.src = pv.shown[pv.shown.length - 2];
+                Object.assign(o.style, {left: (r.left - br.left) + 'px', top: (r.top - br.top) + 'px',
+                                        width: r.width + 'px', height: r.height + 'px'});
+                block.appendChild(o);
+            };
+            b.addEventListener('pointerdown', hold(true));
+            ['pointerup', 'pointerleave', 'pointercancel'].forEach((t) => b.addEventListener(t, hold(false)));
+        }
+        return b;
+    };
+    const say = (text, cls, title) => {
+        const b = badge();
+        if (!b) return;
+        b.textContent = text;
+        b.title = title || '';
+        b.className = 'fs-pbadge ' + (cls || '');
+    };
+    const finish = (state, change) => {
+        clearTimeout(pv.dimTimer);
+        const secs = ((performance.now() - pv.t0) / 1000).toFixed(1);
+        if (state === 'failed') return say('⚠ Preview failed', 'fs-warn');
+        if (state === 'paused') return say('Paused while rendering', 'fs-warn');
+        if (state !== 'shown') return say('', 'fs-off');          // no picture, auto-update off, painting
+        const f = Number(change);
+        let text = '✓ Updated in ' + secs + ' s', cls = 'fs-done', title = '';
+        if (change === 'identical') text += ' · no change';
+        else if (change === 'tiny') text += ' · tiny change (1–2 levels)';
+        else if (change && f > 0) {
+            text += ' · ' + (f < 0.001 ? '<0.1' : (f * 100).toFixed(1)) + '% changed · hold to compare';
+            cls += ' fs-can-compare';
+            title = 'Press and hold to see the previous picture';
+        }
+        say(text, cls, title);
+        pv.dimTimer = setTimeout(() => { const b = badge(); if (b) b.classList.add('fs-dim'); }, 4000);
+    };
+    const watch = () => {
+        // the pictures shown, newest last (the one before the newest is "previous")
+        const img = shownImage();
+        const src = img ? (img.currentSrc || img.src) : null;
+        if (src && pv.shown[pv.shown.length - 1] !== src) pv.shown = pv.shown.concat([src]).slice(-3);
+        const tick = val('#fs_tick input'), answer = val('#fs_preview_done textarea, #fs_preview_done input');
+        if (tick === null) return;
+        if (pv.tick === null) { pv.tick = tick; pv.answer = answer; return; }
+        if (tick !== pv.tick) {
+            pv.tick = tick;
+            const auto = document.querySelector('#fs_auto input[type=checkbox]');
+            const view = val('#view_radio input:checked');
+            if (!pv.pending && ((auto && auto.checked) || view === 'Original' || view === 'Mask')) {
+                pv.pending = true;
+                pv.t0 = performance.now();
+            }
+        }
+        if (answer !== pv.answer) {
+            pv.answer = answer;
+            const [forTick, state, , change] = (answer || '').split('|');
+            // an answer for an older tick (a preview that was already running): keep waiting
+            if (!pv.pending || Number(forTick) === Number(pv.tick)) {
+                if (!pv.pending) pv.t0 = performance.now();
+                pv.pending = false;
+                finish(state, change || '');
+            }
+        }
+        if (pv.pending) {
+            clearTimeout(pv.dimTimer);
+            say('Updating preview… ' + Math.floor((performance.now() - pv.t0) / 1000) + ' s', 'fs-busy');
+        }
+    };
+    document.addEventListener('click', (e) => {
+        if (e.target && e.target.closest && e.target.closest('#fs_refresh') && !pv.pending) {
+            pv.pending = true;
+            pv.t0 = performance.now();
+        }
+    }, true);
+    setInterval(watch, 150);
 }
 """

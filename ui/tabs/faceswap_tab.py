@@ -22,12 +22,12 @@ import traceback
 import gradio as gr
 import numpy as np
 
-import roop.globals
-import roop.utilities as util
-from roop.capturer import get_image_frame, get_video_frame
+import unleashed.globals
+import unleashed.utilities as util
+from unleashed.capturer import get_image_frame, get_video_frame
 from ui.tabs import faceswap_state as S
 
-G = roop.globals
+G = unleashed.globals
 INTERNAL = dict(show_api=False)
 
 
@@ -61,8 +61,37 @@ def _s(key, comp):
 
 
 def _vals(data):
-    """Panel values by key from an event's {component: value} input."""
-    return {k: data[c] for k, c in settings.items() if c in data}
+    """Panel values by key from an event's {component: value} input. An
+    emptied number box sends None: an empty crop box means no crop, any other
+    keeps the value in use (a slider's box puts its minimum back on blur)."""
+    out = {}
+    for k, c in settings.items():
+        if c in data:
+            v = data[c]
+            if v is None:
+                if not k.startswith('crop_'):
+                    continue
+                v = 0.0
+            out[k] = v
+    return out
+
+
+def _next_tick(tick):
+    """The preview tick a server handler returns. tick + 1 could equal the
+    value the browser reached meanwhile with its own +1 (one setting changed
+    while a slow source/target handler ran): an equal value fires no change,
+    so no preview came after the server change. A millisecond clock never
+    meets the browser's small steps."""
+    return max(int(tick or 0) + 1, int(time.time() * 1000))
+
+
+def _drop_missing_targets():
+    """Targets whose file disappeared leave the list, with a note (Gradio's
+    file list fails on a missing file, and with it every event returning it)."""
+    gone = S.drop_missing_targets()
+    if gone:
+        gr.Warning('No longer found, removed from Target files: ' + ', '.join(gone[:3])
+                   + (f' and {len(gone) - 3} more' if len(gone) > 3 else ''))
 
 
 # The source gallery's highlight (the source in use) is set by the server.
@@ -130,15 +159,30 @@ def _title(name, key):
 
 # ============================================================================ layout
 
+_built = False
+
+
 def faceswap_tab():
-    S.load_saved_defaults()
+    global _built
+    if not _built:
+        # the saved defaults once per app start: Settings > Restart Server
+        # builds the tab again and must keep the panel as it is
+        S.load_saved_defaults()
+        _built = True
+    gone = S.drop_missing_targets()           # a missing file would fail the list's build
+    if gone:
+        print(f'[targets] no longer found, removed from the list: {", ".join(gone)}')
     V = S.values
     video = (S.target() or {}).get('kind') in ('video', 'gif')
     t = S.target()
 
     with gr.Tab("Face Swap"):
-        tick = gr.Number(value=0, visible=False)
+        # rendered but hidden: the browser compares it with the tick the last
+        # preview answered (preview_done) to show "Updating…" / "Updated"
+        tick = gr.Number(value=0, elem_id="fs_tick", elem_classes="fs-hidden", container=False)
         C['tick'] = tick
+        C['preview_done'] = gr.Textbox(elem_id="fs_preview_done", elem_classes="fs-hidden", show_label=False,
+                                       container=False)
         with gr.Row(elem_id="swap_row", equal_height=False):
 
             # --------------------------------------------------------------- left: set up
@@ -240,8 +284,9 @@ def faceswap_tab():
                 with gr.Row(equal_height=True, elem_id="view_bar") as view_bar:
                     C['view_bar'] = view_bar
                     C['view'] = gr.Radio(S.VIEWS, value="Swapped", show_label=False, container=False, scale=6, elem_id="view_radio")
-                    C['auto'] = gr.Checkbox(value=True, label="Auto-update", container=False, scale=0, min_width=120)
-                    C['btn_refresh'] = gr.Button("Refresh", size="sm", scale=0, min_width=80)
+                    C['auto'] = gr.Checkbox(value=True, label="Auto-update", container=False, scale=0, min_width=120,
+                                          elem_id="fs_auto")
+                    C['btn_refresh'] = gr.Button("Refresh", size="sm", scale=0, min_width=80, elem_id="fs_refresh")
                 with gr.Row(equal_height=True, elem_id="run_bar"):
                     C['ready_md'] = gr.Markdown(S.readiness()[1], elem_id="ready_line")
                     C['btn_start'] = gr.Button("▶ Start", variant="primary", scale=0, min_width=120)
@@ -287,14 +332,12 @@ def faceswap_tab():
                         _s('to_chin', gr.Checkbox(value=V['to_chin'], label="Extend swap to chin"))
                         _s('aligned_edges', gr.Checkbox(value=V['aligned_edges'], label="Face-aligned edges"))
                     with gr.Row(elem_id="crop_row"):
-                        _s('crop_top', gr.Number(value=V['crop_top'], minimum=0.0, maximum=0.99, step=0.01, precision=2,
-                                                 label="Crop top", min_width=70))
-                        _s('crop_bottom', gr.Number(value=V['crop_bottom'], minimum=0.0, maximum=0.99, step=0.01, precision=2,
-                                                    label="Bottom", min_width=70))
-                        _s('crop_left', gr.Number(value=V['crop_left'], minimum=0.0, maximum=0.99, step=0.01, precision=2,
-                                                  label="Left", min_width=70))
-                        _s('crop_right', gr.Number(value=V['crop_right'], minimum=0.0, maximum=0.99, step=0.01, precision=2,
-                                                   label="Right", min_width=70))
+                        # no minimum / maximum: Gradio refuses the whole event for a value outside them
+                        # (the preview never answered); apply_settings keeps them in 0..0.99
+                        _s('crop_top', gr.Number(value=V['crop_top'], step=0.01, precision=2, label="Crop top", min_width=70))
+                        _s('crop_bottom', gr.Number(value=V['crop_bottom'], step=0.01, precision=2, label="Bottom", min_width=70))
+                        _s('crop_left', gr.Number(value=V['crop_left'], step=0.01, precision=2, label="Left", min_width=70))
+                        _s('crop_right', gr.Number(value=V['crop_right'], step=0.01, precision=2, label="Right", min_width=70))
                     _s('color_transfer', gr.Checkbox(value=V['color_transfer'], label="Match colours to target"))
 
                 with gr.Accordion(f"Enhance · {S.summary('enhance')}", open=False, elem_classes="fs-box") as acc_enh:
@@ -389,7 +432,7 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
 
     # preview (it also refreshes the section headers)
     preview_inputs = set(settings.values()) | {C['view'], C['frame'], C['auto'], tick}
-    preview_outputs = [C['preview'], C['ready_md']] + [C[k] for k in HEADER_KEYS]
+    preview_outputs = [C['preview'], C['ready_md']] + [C[k] for k in HEADER_KEYS] + [C['preview_done']]
     tick.change(on_preview, preview_inputs, preview_outputs, trigger_mode="always_last", concurrency_id="fs_preview",
                 concurrency_limit=1, show_progress="hidden", **INTERNAL)
     C['btn_refresh'].click(lambda d: on_preview(d, force=True), preview_inputs, preview_outputs, concurrency_id="fs_preview",
@@ -405,7 +448,9 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
             _clear_found_path, [C['src_path']], [C['src_path']], show_progress="hidden", **INTERNAL)
     # the mode changes the source numbering (One source per face): keep the highlight
     mode.change(on_mode, [mode], [C['people_col'], C['btn_src_shuffle'], C['ready_md']], **one).then(**fix_src)
-    C['src_gal'].select(on_src_select, [tick], [C['btn_src_combine'], C['ready_md'], tick], **one)
+    # always_last: a click made while the previous one was pending is not dropped
+    C['src_gal'].select(on_src_select, [tick], [C['btn_src_combine'], C['ready_md'], tick],
+                        trigger_mode="always_last", **one)
     C['src_x'].input(on_src_x, [C['src_x'], tick], src_out, **one).then(**fix_src)
     C['btn_src_combine'].click(on_src_combine, [tick], src_out, **slow).then(**fix_src)
     C['btn_src_shuffle'].click(on_src_shuffle, [tick], src_out, **one).then(**fix_src)
@@ -416,9 +461,10 @@ def _wire(tick, er, er_col, engine, clip_col, enh, enh_col, lmk, lmk_col, sm, sm
     C['tgt_files'].upload(on_tgt_upload, [C['tgt_files'], tick], tgt_out, **slow)
     # the list's remaining files, not gr.DeletedFileData: Gradio refuses event
     # data naming a file outside its upload cache (a target added by path)
-    C['tgt_files'].delete(on_tgt_delete, [C['tgt_files'], tick], tgt_out[1:], **one)
+    C['tgt_files'].delete(on_tgt_delete, [C['tgt_files'], tick], tgt_out, trigger_mode="always_last", **one)
     C['tgt_files'].clear(on_tgt_clear, [tick], tgt_out, **one)
-    C['tgt_files'].select(on_tgt_select, [tick], tgt_out[1:], **one)       # not the list: it stays as it is
+    C['tgt_files'].select(on_tgt_select, [tick], tgt_out[1:], trigger_mode="always_last",
+                          **one)       # not the list: it stays as it is
     for ev in (C['btn_tgt_path'].click, C['tgt_path'].submit):
         ev(on_tgt_path, [C['tgt_path'], tick], tgt_out, **slow).then(
             _clear_found_path, [C['tgt_path']], [C['tgt_path']], show_progress="hidden", **INTERNAL)
@@ -470,7 +516,11 @@ def register_load(ui):
 
     def on_load():
         _page_loaded()
-        return [S.values[k] for k in keys] + refresh_values() + [S.path_start()] * 2
+        # the path boxes: only when the start folder changed (Settings) since
+        # the page was built, so text typed right after the page opened stays
+        start = S.path_start()
+        path = start if start != C['src_path'].value else gr.skip()
+        return [S.values[k] for k in keys] + refresh_values() + [path, path]
     ui.load(on_load, None, outputs, show_progress="hidden", **INTERNAL).then(
         src_highlight, None, C['src_gal'], show_progress="hidden", **INTERNAL)
 
@@ -489,6 +539,7 @@ def refresh_values():
     # and only the page that pressed Start hears when it ends (a second Start
     # is refused; a Stop with nothing running says so). The preview tick is a
     # new value (milliseconds): the page's own tick counts up by one.
+    _drop_missing_targets()
     return (_src_updates()[:3] + _tgt_updates()[:9] +
             [gr.Column(visible=S.MODES[S.values['mode']] == 'selected')] + _people_updates() +
             [gr.Markdown(S.readiness()[1]), gr.Button(interactive=True), gr.Button(interactive=_rendering()),
@@ -505,8 +556,13 @@ def _src_updates():
             gr.Markdown(S.readiness()[1])]
 
 
+_listed_targets = set()        # the target paths last sent to the page's file list
+
+
 def _tgt_updates():
     t = S.target()
+    _listed_targets.clear()
+    _listed_targets.update(S.target_paths())
     video = t is not None and t['kind'] != 'image'
     frames = t['frames'] if video else 2
     return [gr.Files(value=S.target_paths() or None), gr.Textbox(value=t['name'] if t else ''),
@@ -534,7 +590,7 @@ def _messages(messages):
 def _apply_detection(thresh, size):
     """Source loading and face picking detect with the panel's values (not
     while a render runs: it reads them per frame)."""
-    from roop import core
+    from unleashed import core
     if not core.render_active:
         S.values['det_thresh'], S.values['det_size'] = thresh, size
         G.det_thresh, G.det_size = float(thresh), int(size)
@@ -561,13 +617,13 @@ def on_src_upload(files, tick, thresh, size, progress=gr.Progress()):
     if files:
         _apply_detection(thresh, size)
         _messages(S.add_sources([f.name if hasattr(f, 'name') else str(f) for f in files], progress))
-    return [None] + _src_updates() + [(tick or 0) + 1]
+    return [None] + _src_updates() + [_next_tick(tick)]
 
 
 def on_src_path(path, tick, thresh, size):
     _apply_detection(thresh, size)
     _messages(S.add_source_path(path))
-    return _src_updates() + [(tick or 0) + 1]
+    return _src_updates() + [_next_tick(tick)]
 
 
 def on_src_select(evt: gr.SelectData, tick):
@@ -575,24 +631,24 @@ def on_src_select(evt: gr.SelectData, tick):
         return [gr.skip()] * 3
     S.select_source(evt.index)
     return [gr.Button(value=S.combine_label(), visible=len(S.same_person_photos()) >= 2),
-            gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+            gr.Markdown(S.readiness()[1]), _next_tick(tick)]
 
 
 def on_src_x(value, tick):
     i = _clicked_index(value)
     if i is None or not S.remove_source(i):
         return [gr.skip()] * 5
-    return _src_updates() + [(tick or 0) + 1]
+    return _src_updates() + [_next_tick(tick)]
 
 
 def on_src_combine(tick):
     _info(S.combine_photo_sources())
-    return _src_updates() + [(tick or 0) + 1]
+    return _src_updates() + [_next_tick(tick)]
 
 
 def on_src_shuffle(tick):
     S.shuffle_sources()
-    return _src_updates() + [(tick or 0) + 1]
+    return _src_updates() + [_next_tick(tick)]
 
 
 # ============================================================================ handlers: targets
@@ -600,11 +656,13 @@ def on_src_shuffle(tick):
 def on_tgt_upload(files, tick, progress=gr.Progress()):
     # the list's value: the files already listed plus the ones just dropped
     paths = [f.name if hasattr(f, 'name') else str(f) for f in (files or [])]
+    _drop_missing_targets()
     known = set(S.target_paths())
-    new = [p for p in paths if p not in known]
+    # the page's list may still show a file that is gone: not added again
+    new = [p for p in paths if p not in known and os.path.isfile(p)]
     if new:
         _messages(S.add_targets(new, progress))
-    return _tgt_updates() + [(tick or 0) + 1]
+    return _tgt_updates() + [_next_tick(tick)]
 
 
 def _clear_found_path(path):
@@ -614,28 +672,41 @@ def _clear_found_path(path):
 
 
 def on_tgt_path(path, tick):
+    _drop_missing_targets()
     _messages(S.add_target_path(path))
-    return _tgt_updates() + [(tick or 0) + 1]
+    return _tgt_updates() + [_next_tick(tick)]
 
 
 def on_tgt_select(evt: gr.SelectData, tick):
-    if evt is None or evt.index == S.selected_target_index():
+    if evt is None:
         return [gr.skip()] * 10
-    S.select_target(evt.index)
-    return _tgt_updates()[1:] + [(tick or 0) + 1]
+    index = evt.index
+    names = [t['name'] for t in S.targets]
+    clicked = evt.value if isinstance(evt.value, str) else None
+    if clicked and 0 <= index < len(names) and names[index] != clicked and names.count(clicked) == 1:
+        index = names.index(clicked)            # a × was processed between the click and now
+    if index == S.selected_target_index():
+        return [gr.skip()] * 10
+    S.select_target(index)
+    return _tgt_updates()[1:] + [_next_tick(tick)]
 
 
 def on_tgt_delete(files, tick):
     """A × in the list: the files still listed stay, the others go."""
     remaining = {f.name if hasattr(f, 'name') else str(f) for f in (files or [])}
-    for path in [p for p in S.target_paths() if p not in remaining]:
+    # only files the page had been shown: a file whose Add is still running
+    # is not in the page's list yet and must not be taken for a removed one
+    for path in [p for p in S.target_paths() if p not in remaining and p in _listed_targets]:
         S.remove_target(path)
-    return _tgt_updates()[1:] + [(tick or 0) + 1]
+    # the whole list back: a second × while the first was pending was dropped
+    # by the page, so page and server could disagree
+    _drop_missing_targets()
+    return _tgt_updates() + [_next_tick(tick)]
 
 
 def on_tgt_clear(tick):
     S.clear_targets()
-    return _tgt_updates() + [(tick or 0) + 1]
+    return _tgt_updates() + [_next_tick(tick)]
 
 
 def on_range(which, frame):
@@ -669,7 +740,7 @@ def _picked(face, crop, tick):
     _picker.clear()
     S.values['mode'] = _specific_people()
     return [gr.Dropdown(value=_specific_people()), gr.Column(visible=False), gr.Gallery(value=None)] + \
-        _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+        _people_updates() + [gr.Markdown(S.readiness()[1]), _next_tick(tick)]
 
 
 def on_use_face(frame, tick):
@@ -700,7 +771,7 @@ def on_person_x(value, tick):
     i = _clicked_index(value)
     if i is None or not S.remove_person(i):
         return [gr.skip()] * 3
-    return _people_updates() + [gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+    return _people_updates() + [gr.Markdown(S.readiness()[1]), _next_tick(tick)]
 
 
 # ============================================================================ handlers: painted mask
@@ -764,7 +835,7 @@ def on_paint_done(editor, frame, tick):
         gr.Warning('The file was removed while painting: nothing saved')
     else:
         _info(f"Painted areas saved for {t['name']}" if painted else f"Nothing painted: no mask on {t['name']}")
-    return _paint_view(False) + [(tick or 0) + 1]
+    return _paint_view(False) + [_next_tick(tick)]
 
 
 def on_paint_clear(frame, tick):
@@ -774,13 +845,13 @@ def on_paint_clear(frame, tick):
 
 def on_paint_cancel(tick):
     _painting.update(tid=None, frame=None)
-    return _paint_view(False) + [(tick or 0) + 1]
+    return _paint_view(False) + [_next_tick(tick)]
 
 
 def on_paint_remove(tick):
     S.clear_target_mask()
     _painting.update(tid=None, frame=None)
-    return _paint_view(False) + [(tick or 0) + 1]
+    return _paint_view(False) + [_next_tick(tick)]
 
 
 # ============================================================================ preview
@@ -805,29 +876,65 @@ def _headers():
 
 
 def on_preview(data, force=False):
-    from roop import core
+    from unleashed import core
     vals = _vals(data)
     view, frame_num, auto = data[C['view']], int(data[C['frame']] or 1), data[C['auto']]
 
     def work():
         S.apply_settings(vals)
+        if _painting['tid'] is not None:
+            return gr.skip()               # the editor stands in for the preview: nothing to show or compare
         return _render_view(view, frame_num, auto or force)
 
+    # "tick|state|nonce|change" for the browser's preview badge (ui/theme.py):
+    # the tick this answer belongs to, what happened to the picture and how it
+    # differs from the picture shown before (see _compare_with_last)
+    def done(state):
+        return f"{data[C['tick']]}|{state}|{time.time_ns()}|{_rendered['change']}"
+
+    _rendered.update(kind='empty', change='')
     try:
         ran, image = core.preview_locked(work)
     except Exception as e:
         traceback.print_exc()
-        return [gr.Image(label=f'Preview failed: {e}', show_label=True), gr.skip()] + [gr.skip()] * len(HEADERS)
+        return ([gr.Image(label=f'Preview failed: {e}', show_label=True), gr.skip()] + [gr.skip()] * len(HEADERS)
+                + [done('failed')])
     if not ran:
-        return [gr.Image(label='Preview paused while rendering', show_label=True), gr.skip()] + [gr.skip()] * len(HEADERS)
+        return ([gr.Image(label='Preview paused while rendering', show_label=True), gr.skip()] + [gr.skip()] * len(HEADERS)
+                + [done('paused')])
     if _painting['tid'] is not None:
         image = gr.skip()                            # the editor stands in for the preview until Done / Cancel
-    return [image, gr.Markdown(S.readiness()[1])] + _headers()
+    state = 'same' if image == gr.skip() else _rendered['kind']
+    return [image, gr.Markdown(S.readiness()[1])] + _headers() + [done(state)]
+
+
+# what the last preview showed, for the badge's "n % changed" (previews run one
+# at a time: concurrency_id fs_preview)
+_rendered = {'kind': 'empty', 'change': ''}
+_last_picture = {'context': None, 'image': None}
+
+
+def _compare_with_last(context, image):
+    """'' (nothing to compare: another file / frame / view), 'identical',
+    'tiny' (only differences of 1-2 levels) or the share of pixels that changed
+    by more than 2 levels, against the previous picture of the same context."""
+    last_context, last = _last_picture['context'], _last_picture['image']
+    _last_picture.update(context=context, image=image)
+    if context != last_context or last is None or last.shape != image.shape:
+        return ''
+    import cv2
+    diff = cv2.absdiff(image, last)
+    if diff.ndim == 3:
+        diff = cv2.max(cv2.max(diff[:, :, 0], diff[:, :, 1]), diff[:, :, 2])
+    if cv2.countNonZero(diff) == 0:
+        return 'identical'
+    changed = cv2.countNonZero(cv2.compare(diff, 2, cv2.CMP_GT)) / float(diff.size)
+    return f'{changed:.6f}' if changed > 0 else 'tiny'
 
 
 def _render_view(view, frame_num, swap_now):
     """The preview image update for this view."""
-    from roop import core
+    from unleashed import core
     t = S.target()
     if t is None:
         return _image(None, 'add a target file')
@@ -862,6 +969,8 @@ def _render_view(view, frame_num, swap_now):
             else:
                 shown = swapped if swapped is not None else frame
     image = util.convert_to_gradio_preview(shown)
+    _rendered.update(kind='shown', change=_compare_with_last((t['path'], frame_num if t['kind'] != 'image' else 0, view),
+                                                              image))
     if view != 'Original':
         # server-side time; if the browser shows it much later, the rest is the tunnel / network
         t_done = time.perf_counter()
@@ -896,11 +1005,19 @@ def on_start_check(data):
         raise gr.Error(text.replace('To start: ', 'Cannot start yet: '))
     missing = [t['name'] for t in S.targets if not os.path.isfile(t['path'])]
     if missing:
-        raise gr.Error('These files are gone (temp folder cleaned?): ' + ', '.join(missing[:5]) + '. Add them again.')
-    if any(t['kind'] != 'image' for t in S.targets) and not util.is_installed('ffmpeg'):
-        raise gr.Error('ffmpeg is not installed: videos cannot be rendered')
+        raise gr.Error('These files are gone (moved, deleted, or the temp folder was cleaned): '
+                       + ', '.join(missing[:5]) + '. Remove them from Target files, or add them again.')
+    if any(t['kind'] != 'image' for t in S.targets):
+        if not util.is_installed('ffmpeg'):
+            raise gr.Error('ffmpeg is not installed: videos cannot be rendered')
+        # pairs ffmpeg refuses only once the render is under way
+        codec, fmt = G.CFG.output_video_codec, G.CFG.output_video_format
+        if fmt == 'webm' and codec != 'libvpx-vp9':
+            raise gr.Error(f'WebM videos need the libvpx-vp9 codec (Video Codec is {codec}): change one of them in Settings')
+        if codec.endswith('_nvenc') and not any('CUDA' in p for p in (G.execution_providers or [])):
+            raise gr.Error(f'{codec} needs an NVIDIA GPU: choose libx264 (or libx265) as Video Codec in Settings')
     global _starting
-    from roop import core
+    from unleashed import core
     _pending.clear()
     _pending.update(_vals(data))
     core.stop_requested = False
@@ -910,13 +1027,14 @@ def on_start_check(data):
 
 def on_render(progress=gr.Progress()):
     global _starting
-    from roop import core
+    from unleashed import core
     from ui.main import prepare_environment
     if not S.run_lock.acquire(blocking=False):
         return gr.Markdown('A render is already running')
     started = time.time()
     try:
         prepare_environment()
+        out_dir = G.output_path                   # where this run writes, even if Settings change meanwhile
         entries = S.process_entries()
         with core._swap_lock:                     # waits for a preview; none can start after this
             S.apply_settings(_pending)
@@ -940,6 +1058,7 @@ def on_render(progress=gr.Progress()):
         finally:
             core.render_active = False
         finished = [e.finalname for e in entries if getattr(e, 'completed', False) and os.path.isfile(e.finalname)]
+        S.record_outputs(finished)
         secs = time.time() - started
         done = f'{len(finished)} of {len(entries)} file{"s" if len(entries) != 1 else ""}'
         stopped = not G.processing
@@ -947,17 +1066,29 @@ def on_render(progress=gr.Progress()):
         if stopped and len(finished) < len(entries):
             partial = [os.path.basename(e.finalname) for e in entries
                        if not getattr(e, 'completed', False) and e.finalname and os.path.isfile(e.finalname)]
-            text = (f'**Stopped** after {secs:.0f} s: {done} finished, saved in `{G.output_path}`.' if finished
+            text = (f'**Stopped** after {secs:.0f} s: {done} finished, saved in `{out_dir}`.' if finished
                     else f'**Stopped** after {secs:.0f} s, before a file was finished.')
             if partial:
                 text += f' The interrupted part is left as `{partial[0]}` (no sound; the next run overwrites it).'
             return gr.Markdown(text)
         what = f'`{os.path.basename(finished[0])}`' if len(finished) == 1 else done
-        return gr.Markdown(f'**Done** in {secs:.0f} s: {what} saved in `{G.output_path}`.')
+        text = f'**Done** in {secs:.0f} s: {what} saved in `{out_dir}`.'
+        silent = [os.path.basename(e.finalname) for e in entries if getattr(e, 'completed', False) and getattr(e, 'no_audio', False)]
+        if silent:
+            text += f' Saved without sound (it could not be copied): {", ".join(silent[:3])}.'
+        failed = [f'{os.path.basename(e.filename)}: {e.failure}' for e in entries
+                  if not getattr(e, 'completed', False) and getattr(e, 'failure', '')]
+        if failed:
+            text = text.replace('**Done**', '**Done, with problems**') + ' Not saved: ' + '; '.join(failed[:3]) + '.'
+        return gr.Markdown(text)
     except Exception as e:
         traceback.print_exc()
         G.processing = False
-        return gr.Markdown(f'**Render failed:** {e}')
+        # the first line (ffmpeg's errors run on for a page): the rest is in the console
+        text = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+        if 'FFMPEG encountered' in str(e):
+            text = 'ffmpeg stopped while writing the video (codec / format / disk space?)'
+        return gr.Markdown(f'**Render failed:** {text[:300]} (details in the console)')
     finally:
         core.stop_requested = False
         _starting = 0.0
@@ -967,11 +1098,11 @@ def on_render(progress=gr.Progress()):
 def on_render_done(tick):
     running = _rendering()
     return [gr.Button(interactive=not running), gr.Button(interactive=running),
-            gr.Markdown(S.readiness()[1]), (tick or 0) + 1]
+            gr.Markdown(S.readiness()[1]), _next_tick(tick)]
 
 
 def on_stop():
-    from roop import core
+    from unleashed import core
     if not _rendering():
         return [gr.Button(interactive=False), gr.Markdown('Nothing is rendering.')]
     core.stop_requested = True        # also when the render is still starting
@@ -996,13 +1127,13 @@ def on_load_defaults(keys, tick):
         gr.Warning('No saved defaults yet: set the panel up and press "Save my defaults"')
         return [gr.skip()] * (len(keys) + 1)
     _info('Your saved defaults are back')
-    return [S.values[k] for k in keys] + [(tick or 0) + 1]
+    return [S.values[k] for k in keys] + [_next_tick(tick)]
 
 
 def on_factory_defaults(keys, tick):
     S.factory_defaults()
     _info('Factory defaults loaded (your saved defaults are kept)' if S.has_saved_defaults() else 'Factory defaults loaded')
-    return [S.values[k] for k in keys] + [(tick or 0) + 1]
+    return [S.values[k] for k in keys] + [_next_tick(tick)]
 
 
 # ============================================================================ used by other tabs

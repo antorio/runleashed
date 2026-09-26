@@ -16,11 +16,11 @@ import tempfile
 import cv2
 import numpy as np
 import gradio as gr
-import roop.utilities as util
-import roop.globals
-from roop import faceset_check
-from roop.face_util import extract_face_images, get_all_faces
-from roop.capturer import get_video_frame, get_video_frame_total
+import unleashed.utilities as util
+import unleashed.globals
+from unleashed import faceset_check
+from unleashed.face_util import extract_face_images, get_all_faces
+from unleashed.capturer import get_video_frame, get_video_frame_total
 
 # The photos in the faceset, in order. Each: {'id': int, 'image': the 512 BGR
 # cut-out saved in the .fsz, 'face': the face found in it, 'thumb': path of a
@@ -36,6 +36,7 @@ _next_id = 0
 _video_path = None
 current_video_fps = 0
 _last_saved = None          # the .fsz written by the last Save (for 'Use in Face Swap')
+_saved_ids = None           # the photos (ids, in order) that Save wrote
 
 SHOW_ALL, SHOW_ATTENTION = 'All photos', 'Needs attention'
 _filter = SHOW_ALL
@@ -58,7 +59,8 @@ FLAG_TEXT = {           # flag prefix -> (label on the photo, explanation)
 }
 
 
-def facemgr_tab() -> None:
+def facemgr_tab():
+    """Builds the tab; returns register_load(ui) for the page-load refresh."""
     with gr.Tab("Face Management"):
         gr.Markdown("## Build a faceset\nA faceset (.fsz) holds photos of **one person**. The swap blends them into one "
                     "identity, so clean photos matter more than many: aim for 30–80 good photos of one look "
@@ -110,7 +112,8 @@ def facemgr_tab() -> None:
                 dup_image = gr.Image(label="Nearly identical to", interactive=False, height=150, format="jpeg",
                                      visible=False)
 
-    view = [gallery, summary, btn_remove_flagged, btn_undo, btn_save, sel_image, sel_info, btn_remove, btn_keep, dup_image]
+    view = [gallery, summary, btn_remove_flagged, btn_undo, btn_save, sel_image, sel_info, btn_remove, btn_keep, dup_image,
+            btn_use_in_swap]
     detail = [sel_image, sel_info, btn_remove, btn_keep, dup_image]
     one = dict(concurrency_id='facemgr', concurrency_limit=1)
 
@@ -134,10 +137,24 @@ def facemgr_tab() -> None:
     btn_save.click(fn=on_save, inputs=[save_name], outputs=[save_file, save_msg, btn_use_in_swap], **one)
     from ui.tabs import faceswap_tab as fs
     # in the Face Swap tab's group: it changes that tab's source list
-    btn_use_in_swap.click(fn=lambda: fs.add_faceset_to_sources(_last_saved), outputs=fs.refresh_outputs(),
+    # only the list as it was saved: after a change, Save first
+    btn_use_in_swap.click(fn=lambda: fs.add_faceset_to_sources(_last_saved if _saved_is_current() else None),
+                          outputs=fs.refresh_outputs(),
                           concurrency_id='fs_state', concurrency_limit=1).then(
         fn=fs.src_highlight,
         outputs=fs.C['src_gal'], show_progress='hidden')
+
+    def register_load(ui):
+        """A reloaded page (or Restart Server) shows the server's list: the tab
+        had no load event, so it came back empty while the server kept the
+        photos, with Save disabled and the filter out of step."""
+        def on_page_load():
+            _refresh()
+            saved = _last_saved if _last_saved and os.path.isfile(_last_saved) else None
+            return _render() + [gr.Radio(value=_filter), gr.File(value=saved, visible=bool(saved)), gr.Markdown('')]
+        ui.load(on_page_load, None, view + [show, save_file, save_msg], show_progress='hidden', **one)
+
+    return register_load
 
 
 # ----------------------------------------------------------------------------- state
@@ -286,7 +303,7 @@ def _detail():
 
 
 def _shape_reason(m, r):
-    from roop.face_shape import MOUTH_OPEN, SHAPE_PITCH, SHAPE_YAW
+    from unleashed.face_shape import MOUTH_OPEN, SHAPE_PITCH, SHAPE_YAW
     reasons = []
     if any(f.startswith('other person?') for f in r.get('flags', [])):
         reasons.append('another person')
@@ -301,7 +318,7 @@ def _shape_reason(m, r):
 
 
 def _mouth_open():
-    from roop.face_shape import MOUTH_OPEN
+    from unleashed.face_shape import MOUTH_OPEN
     return MOUTH_OPEN
 
 
@@ -320,7 +337,14 @@ def _render():
                       interactive=flagged > 0),
             gr.Button(value=undo_label, interactive=bool(_undo)),
             gr.Button(interactive=bool(entries)),
-            *_detail()]
+            *_detail(),
+            gr.Button(visible=_saved_is_current())]
+
+
+def _saved_is_current():
+    """The last saved .fsz still holds exactly the photos in the list."""
+    return (bool(_last_saved) and os.path.isfile(_last_saved) and _saved_ids is not None
+            and _saved_ids == [e['id'] for e in entries])
 
 
 def _remove(ids, label):
@@ -379,14 +403,15 @@ def on_video_loaded(video):
     current_video_fps = util.detect_fps(_video_path) or 1
     frame = get_video_frame(_video_path, 1, exact=True)
     return [gr.Image(value=None if frame is None else util.convert_to_gradio(frame)),
-            gr.Slider(value=1, minimum=1, maximum=total, interactive=True),
+            gr.Slider(value=1, minimum=1, maximum=total, step=1, interactive=True),
             gr.Button(interactive=frame is not None)]
 
 
 def on_video_cleared():
     global _video_path
     _video_path = None
-    return [gr.Image(value=None), gr.Slider(value=1, minimum=1, maximum=1, interactive=False), gr.Button(interactive=False)]
+    # step=1: without it Gradio 5.9.1 fails on minimum == maximum ('math domain error')
+    return [gr.Image(value=None), gr.Slider(value=1, minimum=1, maximum=1, step=1, interactive=False), gr.Button(interactive=False)]
 
 
 def on_video_frame(frame_num):
@@ -415,13 +440,20 @@ def on_faceset_opened(fsz, progress=gr.Progress()):
     if fsz is None:
         return [None, gr.Textbox()] + _render()
     path = fsz.name if hasattr(fsz, 'name') else str(fsz)
-    if entries:
-        _remove({e['id'] for e in entries}, 'open faceset')
-    _selected = None
     folder = tempfile.mkdtemp(prefix='faceset_')
     missing = []
     try:
-        util.unzip(path, folder)
+        # read the file first, then replace the list: a damaged file (a save
+        # cut off by a disconnect) used to empty the list and leave the page
+        # showing the old photos
+        try:
+            util.unzip(path, folder)
+        except Exception as e:
+            gr.Warning(f"{os.path.basename(path)} is damaged or not a faceset ({e}); the list was not changed")
+            return [None, gr.Textbox()] + _render()
+        if entries:
+            _remove({e['id'] for e in entries}, 'open faceset')
+        _selected = None
         pngs = [f for f in os.listdir(folder) if f.lower().endswith('.png')]
         pngs.sort(key=lambda f: [int(t) if t.isdigit() else t for t in re.split(r'(\d+)', f)])
         for k, file in enumerate(pngs):
@@ -523,7 +555,8 @@ def on_undo():
 
 
 def on_start_over():
-    global _selected
+    global _selected, _last_saved, _saved_ids
+    _last_saved, _saved_ids = None, None
     if entries:
         _remove({e['id'] for e in entries}, 'start over')
     _selected = None
@@ -533,15 +566,15 @@ def on_start_over():
 
 
 def on_save(name):
-    global _last_saved
+    global _last_saved, _saved_ids
     if not entries:
         gr.Warning('No photos to save')
         return [gr.File(visible=False), gr.Markdown(''), gr.Button(visible=False)]
     base = re.sub(r'[^\w\-]+', '_', (name or '').strip()).strip('_') or 'faceset'
-    target = os.path.join(roop.globals.output_path, base + '.fsz')
+    target = os.path.join(unleashed.globals.output_path, base + '.fsz')
     n = 2
     while os.path.exists(target):
-        target = os.path.join(roop.globals.output_path, f'{base}_{n}.fsz')
+        target = os.path.join(unleashed.globals.output_path, f'{base}_{n}.fsz')
         n += 1
     folder = tempfile.mkdtemp(prefix='faceset_')
     try:
@@ -550,13 +583,20 @@ def on_save(name):
             p = os.path.join(folder, f'{k}.png')
             cv2.imwrite(p, e['image'])
             names.append(p)
-        util.zip(names, target)
+        # under a temporary name first: a save cut off half way (a Colab
+        # disconnect) must not leave a damaged .fsz under the real name
+        part = target + '.part'
+        util.zip(names, part)
+        os.replace(part, target)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
     flagged = sum(1 for e in entries if _needs_attention(e))
     note = f" ({flagged} still flagged)" if flagged else ''
     renamed = f" `{base}.fsz` already existed, so it was saved under a new name." if os.path.basename(target) != base + '.fsz' else ''
     _last_saved = target
+    _saved_ids = [e['id'] for e in entries]
+    # the file itself may be offered for download, wherever the output folder is
+    gr.set_static_paths([target])
     return [gr.File(value=target, visible=True),
             gr.Markdown(f"Saved **{len(entries)} photos**{note} to `{target}`.{renamed}"),
             gr.Button(visible=True)]

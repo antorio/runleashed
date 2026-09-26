@@ -2,9 +2,9 @@
 the page and wires it to these functions).
 
 State lives on the server, module-level (one user at a time, like the rest of
-the app): the sources (roop.globals.INPUT_FACESETS + thumbnails + captions +
+the app): the sources (unleashed.globals.INPUT_FACESETS + thumbnails + captions +
 which one is active), the target files (with their frame range, output frame
-rate and painted mask), the people to replace (roop.globals.TARGET_FACES), and
+rate and painted mask), the people to replace (unleashed.globals.TARGET_FACES), and
 the settings last applied from the panel.
 
 Settings are applied from the panel at every preview refresh and once at Start
@@ -22,14 +22,14 @@ import threading
 import cv2
 import numpy as np
 
-import roop.globals
-import roop.utilities as util
+import unleashed.globals
+import unleashed.utilities as util
 import ui.globals
-from roop.FaceSet import FaceSet
-from roop.ProcessEntry import ProcessEntry
-from roop.ProcessOptions import ProcessOptions
+from unleashed.FaceSet import FaceSet
+from unleashed.ProcessEntry import ProcessEntry
+from unleashed.ProcessOptions import ProcessOptions
 
-G = roop.globals
+G = unleashed.globals
 SWAP_MODEL = "InSwapper 128"        # the only model; ProcessOptions reads the output size (128) from it
 
 # ----------------------------------------------------------------------------- choices
@@ -42,7 +42,7 @@ MODES = {                           # label -> ProcessMgr swap mode
     'All men': 'all_male',
     'One source per face (left to right)': 'all_input',
 }
-NO_FACE = {                         # label -> roop.globals.no_face_action
+NO_FACE = {                         # label -> unleashed.globals.no_face_action
     'Keep the original frame': 0,
     'Try rotated, else keep the original': 1,
     'Drop the frame': 2,
@@ -63,7 +63,7 @@ METHOD_MEMORY, METHOD_EXTRACT = 'In memory (recommended)', 'Extract frames to di
 MULTI_ANGLE = {'Off': 'off', 'Only when no upright face is found': 'fallback', 'Always (slower)': 'always'}
 VIEWS = ['Original', 'Swapped', 'Side by side', 'Mask']
 
-# accepted exactly as the render accepts them (roop.core.batch_process)
+# accepted exactly as the render accepts them (unleashed.core.batch_process)
 def is_target_file(path):
     return util.has_image_extension(path) or util.is_video(path) or util.has_extension(path, ['gif'])
 
@@ -76,8 +76,9 @@ def is_source_file(path):
 
 # key -> initial value: the old panel's defaults (the engine globals for the
 # settings that were bound to one), so the default output is unchanged --
-# except two the user changed on 26 Sep (roop/globals.py): Match tolerance
-# 0.65 -> 0.8 (Specific people only) and ER strength 80 -> 100 (ER is off)
+# except what the user changed on 26 Sep (unleashed/globals.py): Match tolerance
+# 0.65 -> 0.8, ER on with strength 100 (was off / 80), Extend swap to chin
+# and Face-aligned edges on
 FACTORY = {
     # faces to replace
     'mode': 'Largest face', 'tolerance': G.distance_threshold,
@@ -110,11 +111,22 @@ FACTORY = {
 }
 values = dict(FACTORY)
 SETTING_KEYS = list(FACTORY)
-_SETTINGS_FILE = 'runleashed_faceswap_settings.json'
+_SETTINGS_FILE = 'unleashed_faceswap_settings.json'
+_LEGACY_SETTINGS_FILE = 'runleashed_faceswap_settings.json'     # the name before v1.2
 
 
 def _settings_path():
-    return os.path.join(G.output_path or '.', _SETTINGS_FILE)
+    """The saved defaults in the output folder. A file saved before v1.2 under
+    the old name is renamed once, so the user's defaults are not lost."""
+    folder = G.output_path or '.'
+    path = os.path.join(folder, _SETTINGS_FILE)
+    legacy = os.path.join(folder, _LEGACY_SETTINGS_FILE)
+    if not os.path.isfile(path) and os.path.isfile(legacy):
+        try:
+            os.replace(legacy, path)
+        except OSError:
+            return legacy
+    return path
 
 
 def load_saved_defaults():
@@ -173,9 +185,10 @@ def factory_defaults():
 def apply_settings(settings=None):
     """Store the panel's values and write them to the engine: globals, and the
     crop offsets onto every source. Call inside the engine lock, never while a
-    render runs (roop.core.preview_locked / at Start)."""
+    render runs (unleashed.core.preview_locked / at Start)."""
     if settings:
-        values.update({k: v for k, v in settings.items() if k in FACTORY})
+        # None = an emptied number box: keep the value in use
+        values.update({k: v for k, v in settings.items() if k in FACTORY and v is not None})
     v = values
     G.face_swap_mode = MODES[v['mode']]
     G.distance_threshold = float(v['tolerance'])
@@ -218,11 +231,21 @@ def apply_settings(settings=None):
     G.wait_after_extraction = False
     G.execution_threads = int(round(float(G.CFG.max_threads)))
     # crop offsets: the same for every source (top + bottom and left + right < 1)
-    top = min(float(v['crop_top']), 0.99)
-    bottom = min(float(v['crop_bottom']), 0.99 - top)
-    left = min(float(v['crop_left']), 0.99)
-    right = min(float(v['crop_right']), 0.99 - left)
+    def crop(key, limit):
+        try:
+            return min(max(float(v[key] or 0), 0.0), limit)
+        except (TypeError, ValueError):
+            return 0.0
+    top = crop('crop_top', 0.99)
+    bottom = crop('crop_bottom', 0.99 - top)
+    left = crop('crop_left', 0.99)
+    right = crop('crop_right', 0.99 - left)
     for face_set in G.INPUT_FACESETS:
+        # Settings > Faceset average mode / outlier threshold changed since
+        # this faceset was averaged: average it again (it only happened when
+        # the faceset was added, so the setting did nothing for it)
+        if not face_set.average_is_current():
+            face_set.reaverage()
         for face in face_set.faces:
             mo = list(getattr(face, 'mask_offsets', None) or (0, 0, 0, 0, 1, 20))
             face.mask_offsets = (top, bottom, left, right, mo[4], mo[5])
@@ -246,7 +269,7 @@ def build_options(mask_view=False):
     the Mask view, no swap, every face, tinted green where a swap would
     replace the frame (occlusion mask, paste edges, kept mouth / eyes and
     painted areas stay untinted)."""
-    from roop.core import get_processing_plugins
+    from unleashed.core import get_processing_plugins
     plugin, _ = mask_plugin()
     t = target()
     painted = t['mask'] if t is not None else None
@@ -306,7 +329,7 @@ def summary(section):
 
 # ----------------------------------------------------------------------------- sources
 
-source_captions = []                 # parallel to roop.globals.INPUT_FACESETS / ui.globals.ui_input_thumbs
+source_captions = []                 # parallel to unleashed.globals.INPUT_FACESETS / ui.globals.ui_input_thumbs
 active_source = 0
 
 
@@ -346,7 +369,7 @@ def combine_label():
 def same_person_photos():
     """Indexes of the photo sources of the person in use (the one in use
     included), or [] when the source in use is a faceset. Same person: the
-    faceset check's "other person?" threshold (roop/faceset_check.py)."""
+    faceset check's "other person?" threshold (unleashed/faceset_check.py)."""
     _sync_sources()
     if not G.INPUT_FACESETS:
         return []
@@ -362,8 +385,8 @@ def add_sources(paths, progress=None):
     """Load photos (every face becomes a source) and .fsz facesets (one source
     each). Returns a list of per-file messages."""
     global active_source
-    from roop.face_util import extract_face_images
-    from roop.capturer import get_image_frame
+    from unleashed.face_util import extract_face_images
+    from unleashed.capturer import get_image_frame
     _sync_sources()
     first_new = len(G.INPUT_FACESETS)
     messages = []
@@ -371,37 +394,49 @@ def add_sources(paths, progress=None):
         if progress is not None:
             progress(k / max(len(paths), 1), desc='Loading source faces')
         name = os.path.basename(path)
-        if path.lower().endswith('.fsz'):
-            face_set, caption, msg = _load_faceset(path)
-            if face_set is None:
-                messages.append(msg)
-                continue
-            G.INPUT_FACESETS.append(face_set)
-            ui.globals.ui_input_thumbs.append(face_set.thumb)
-            source_captions.append(caption)
-            messages.append(msg or f'{name}: faceset added ({caption.split(" · ")[-1]})')
-        elif util.has_image_extension(path):
-            found = extract_face_images(path, (False, 0))
-            if not found:
-                messages.append(f'{name}: no face found, not added (try a lower Detection confidence)')
-                continue
-            image = get_image_frame(path)
-            for i, (face, crop) in enumerate(found):
-                face.mask_offsets = (0, 0, 0, 0, 1, 20)
-                face_set = FaceSet()
-                face_set.faces.append(face)
-                face_set.ref_images.append(image)
-                face_set.from_photo = True
-                G.INPUT_FACESETS.append(face_set)
-                ui.globals.ui_input_thumbs.append(util.convert_to_gradio(crop))
-                source_captions.append(name if len(found) == 1 else f'{name} · face {i + 1}')
-            messages.append(f'{name}: 1 face added' if len(found) == 1 else
-                            f'{name}: {len(found)} faces added as {len(found)} sources')
-        else:
-            messages.append(f'{name}: not a photo or faceset, skipped')
+        try:
+            messages.append(_add_source_file(path, name, extract_face_images, get_image_frame))
+        except Exception as e:
+            # a damaged photo or faceset: the others still load, and the
+            # gallery shows what did (it used to stop at the bad file with
+            # the earlier ones added but not shown)
+            print(f'[source] {name}: {e}')
+            messages.append(f'{name}: cannot be read ({e}), skipped')
     if len(G.INPUT_FACESETS) > first_new:
         active_source = first_new          # the newest source is the one in use
     return messages
+
+
+def _add_source_file(path, name, extract_face_images, get_image_frame):
+    """One photo (every face becomes a source) or .fsz (one source); the
+    message for it."""
+    if path.lower().endswith('.fsz'):
+        face_set, caption, msg = _load_faceset(path)
+        if face_set is None:
+            return msg
+        face_set.files = [path]
+        G.INPUT_FACESETS.append(face_set)
+        ui.globals.ui_input_thumbs.append(face_set.thumb)
+        source_captions.append(caption)
+        return msg or f'{name}: faceset added ({caption.split(" · ")[-1]})'
+    if util.has_image_extension(path):
+        found = extract_face_images(path, (False, 0))
+        if not found:
+            return f'{name}: no face found, not added (try a lower Detection confidence)'
+        image = get_image_frame(path)
+        for i, (face, crop) in enumerate(found):
+            face.mask_offsets = (0, 0, 0, 0, 1, 20)
+            face_set = FaceSet()
+            face_set.faces.append(face)
+            face_set.ref_images.append(image)
+            face_set.from_photo = True
+            face_set.files = [path]
+            G.INPUT_FACESETS.append(face_set)
+            ui.globals.ui_input_thumbs.append(util.convert_to_gradio(crop))
+            source_captions.append(name if len(found) == 1 else f'{name} · face {i + 1}')
+        return (f'{name}: 1 face added' if len(found) == 1 else
+                f'{name}: {len(found)} faces added as {len(found)} sources')
+    return f'{name}: not a photo or faceset, skipped'
 
 
 def path_start():
@@ -439,12 +474,17 @@ def add_source_path(path):
 def _load_faceset(path):
     """One FaceSet from a .fsz (all faces of all its PNGs, averaged), its
     caption, and a message (faceset check or error)."""
-    from roop.face_util import extract_face_images
-    from roop.capturer import get_image_frame
+    from unleashed.face_util import extract_face_images
+    from unleashed.capturer import get_image_frame
     name = os.path.basename(path)
     folder = tempfile.mkdtemp(prefix='faceset_')
     try:
-        util.unzip(path, folder)
+        try:
+            util.unzip(path, folder)
+        except Exception as e:
+            # truncated (a save cut off by a disconnect), not a zip, bad CRC ...
+            print(f'[faceset] {name}: {e}')
+            return None, None, f'{name}: damaged or not a faceset file, not added'
         face_set = FaceSet()
         main_faces = []
         thumb = None
@@ -470,7 +510,7 @@ def _load_faceset(path):
         flagged = 0
         if len(main_faces) > 2:
             try:
-                from roop import faceset_check
+                from unleashed import faceset_check
                 refs = face_set.ref_images
                 rows = faceset_check.check([faceset_check.photo_metrics(face_set.faces[i], refs[i], geometry=False)
                                             for i in main_faces])
@@ -542,6 +582,7 @@ def combine_photo_sources():
     a = active_source_index()
     photos = [i for i, s in enumerate(G.INPUT_FACESETS) if getattr(s, 'from_photo', False)]
     combined = FaceSet()
+    combined.files = [f for i in same for f in getattr(G.INPUT_FACESETS[i], 'files', [])]
     for i in same:
         # copies: AverageEmbeddings writes the average into faces[0], which
         # must not change the photo's own Face object
@@ -584,7 +625,7 @@ _next_target = 0
 def _probe(path):
     """(kind, frames, fps, first frame BGR) of a target file."""
     if util.has_image_extension(path):
-        from roop.capturer import get_image_frame
+        from unleashed.capturer import get_image_frame
         return 'image', 1, 0.0, get_image_frame(path)
     cap = cv2.VideoCapture(path)
     try:
@@ -594,6 +635,33 @@ def _probe(path):
         cap.release()
     fps = float(util.detect_fps(path) or 0) if frames > 0 else 0.0
     return ('gif' if path.lower().endswith('.gif') else 'video'), frames, fps, frame if ok else None
+
+
+def _variable_frame_rate(path):
+    """True when ffprobe reports an average frame rate that differs from the
+    stream's nominal rate by more than 1.5 % (phone clips that slow down in low
+    light, screen recordings). The in-memory render times frames at the
+    average rate, so the sound drifts from the picture in such a video."""
+    import shutil as _sh
+    import subprocess
+    if _sh.which('ffprobe') is None:
+        return False
+    try:
+        out = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries',
+                              'stream=r_frame_rate,avg_frame_rate', '-of', 'json', path],
+                             capture_output=True, text=True, timeout=20).stdout
+        stream = (json.loads(out or '{}').get('streams') or [{}])[0]
+
+        def rate(text):
+            num, _, den = str(text or '').partition('/')
+            return float(num) / float(den or 1) if float(den or 1) else 0.0
+
+        nominal, average = rate(stream.get('r_frame_rate')), rate(stream.get('avg_frame_rate'))
+        if nominal > 0 and average > 0:
+            return abs(nominal - average) / max(nominal, average) > 0.015
+    except Exception:
+        pass
+    return False
 
 
 def _serve_in_place(path):
@@ -612,7 +680,7 @@ def add_targets(paths, progress=None):
     """Add target files (images, videos, GIFs); a path already in the list is
     not added again. Returns per-file messages for files that were not added."""
     global _next_target, selected_target
-    from roop.capturer import prepare_seek_copy
+    from unleashed.capturer import prepare_seek_copy
     known = {t['path'] for t in targets}
     messages = []
     for k, path in enumerate(paths):
@@ -620,6 +688,9 @@ def add_targets(paths, progress=None):
             progress(k / max(len(paths), 1), desc='Adding target files')
         name = os.path.basename(path)
         if path in known:
+            continue
+        if not os.path.isfile(path):
+            messages.append(f'{name}: not found, not added')
             continue
         if not is_target_file(path):
             messages.append(f'{name}: not an image, video or GIF, skipped')
@@ -630,7 +701,8 @@ def add_targets(paths, progress=None):
             continue
         _next_target += 1
         t = {'id': _next_target, 'path': path, 'name': name, 'kind': kind, 'frames': frames, 'fps': fps,
-             'start': 1, 'end': frames, 'out_fps': 0.0, 'mask': None, 'mask_frame': None}
+             'start': 1, 'end': frames, 'out_fps': 0.0, 'mask': None, 'mask_frame': None,
+             'vfr': kind == 'video' and _variable_frame_rate(path)}
         _serve_in_place(path)
         targets.append(t)
         known.add(path)
@@ -814,10 +886,12 @@ def remove_person(index):
 def faces_in_frame(frame_num):
     """([(face, crop)], problem) for the frame the preview shows, found as
     the swap finds them (rotated faces too), left to right."""
-    from roop.face_util import extract_face_images
+    from unleashed.face_util import extract_face_images
     t = target()
     if t is None:
         return [], 'Add a target file first'
+    if not os.path.isfile(t['path']):
+        return [], f"{t['name']} is gone (moved or deleted): add it again"
     if t['kind'] == 'image':
         found = extract_face_images(t['path'], (False, 0), use_multi_angle=True)
     else:
@@ -837,7 +911,7 @@ def set_target_mask(editor_value, frame_num, tid=None):
         return False
     layers = (editor_value or {}).get('layers') or []
     layer = layers[0] if layers else None
-    from roop.ProcessMgr import ProcessMgr
+    from unleashed.ProcessMgr import ProcessMgr
     if layer is not None and ProcessMgr.manual_mask(layer) is None:
         layer = None
     t['mask'] = layer
@@ -918,29 +992,123 @@ def run_warnings():
     if len(names) != len(set(names)):
         w.append('Same file names: results get _2, _3 …')
     if G.CFG.clear_output:
-        w.append('The output folder is emptied at Start (Settings).')
+        w.append('Start deletes the results of earlier runs from the output folder (Settings).')
+    vfr = [t['name'] for t in targets if t.get('vfr')]
+    if vfr:
+        w.append(f"{', '.join(vfr[:2])}{' …' if len(vfr) > 2 else ''}: variable frame rate. In memory the sound can "
+                 "drift from the picture (up to about a second); render it with Extract frames (whole video), or "
+                 "convert it to a constant frame rate first.")
     plugin, warn = mask_plugin()
     if warn:
         w.append(warn)
     return w
 
 
+_OUTPUTS_FILE = '.unleashed_outputs.json'      # in the output folder: the files renders wrote there
+
+
+def _outputs_path(folder):
+    return os.path.join(folder, _OUTPUTS_FILE)
+
+
+def _read_outputs(folder):
+    """[{'name', 'size', 'mtime'}] of the results recorded in this folder."""
+    try:
+        with open(_outputs_path(folder), encoding='utf-8') as fh:
+            rows = json.load(fh)
+        return [r for r in rows if isinstance(r, dict) and isinstance(r.get('name'), str)]
+    except Exception:
+        return []
+
+
+def _write_outputs(folder, rows):
+    try:
+        if rows:
+            with open(_outputs_path(folder), 'w', encoding='utf-8') as fh:
+                json.dump(rows, fh, indent=0)
+        elif os.path.isfile(_outputs_path(folder)):
+            os.remove(_outputs_path(folder))
+    except OSError as e:
+        print(f'[output] could not record the results ({e})')
+
+
+def _unchanged(path, row):
+    """The file is still the result the render wrote (same size and time): a
+    file the user saved later under that name is theirs."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    return st.st_size == row.get('size') and abs(st.st_mtime - float(row.get('mtime') or 0)) < 2
+
+
+def record_outputs(paths):
+    """Remember the files a render wrote (per output folder), so 'Delete
+    earlier results' deletes those and nothing else."""
+    by_folder = {}
+    for p in paths:
+        if p and os.path.isfile(p):
+            st = os.stat(p)
+            by_folder.setdefault(os.path.dirname(os.path.abspath(p)), []).append(
+                {'name': os.path.basename(p), 'size': st.st_size, 'mtime': st.st_mtime})
+    for folder, rows in by_folder.items():
+        names = {r['name'] for r in rows}
+        _write_outputs(folder, [r for r in _read_outputs(folder) if r['name'] not in names] + rows)
+
+
+def _files_in_use():
+    """Real paths of the targets and of the photos / facesets the sources came from."""
+    used = {os.path.realpath(t['path']) for t in targets}
+    for face_set in G.INPUT_FACESETS:
+        used.update(os.path.realpath(f) for f in getattr(face_set, 'files', []) or [])
+    return used
+
+
 def clear_output_media():
-    """'Clear output folder before each run': delete the earlier results (images,
-    videos, GIFs) in the output folder, not facesets, saved settings or folders."""
+    """'Delete earlier results at Start': delete the results of earlier runs in
+    the output folder: the files renders recorded there (and still as they
+    wrote them), and the unfinished __temp parts of stopped renders. Never a
+    target or source in use and never anything else (on Colab the output
+    folder is also where the user keeps targets and photos: the old version
+    deleted every image and video in it, the file being rendered included)."""
     folder = G.output_path
     if not folder or not os.path.isdir(folder):
         return 0
-    removed = 0
-    for f in os.listdir(folder):
-        p = os.path.join(folder, f)
-        if os.path.isfile(p) and is_target_file(p):
-            try:
-                os.remove(p)
-                removed += 1
-            except OSError:
-                pass
+    in_use = _files_in_use()
+    rows = _read_outputs(folder)
+    recorded = {r['name'] for r in rows}
+    leftovers = [f for f in os.listdir(folder)
+                 if '__temp' in os.path.splitext(f)[0] and f not in recorded and is_target_file(os.path.join(folder, f))]
+    removed, kept = 0, []
+    for row in rows + [{'name': f, 'leftover': True} for f in leftovers]:
+        p = os.path.join(folder, row['name'])
+        if not os.path.isfile(p):
+            continue
+        if os.path.realpath(p) in in_use or not (row.get('leftover') or _unchanged(p, row)):
+            if not row.get('leftover') and os.path.realpath(p) in in_use:
+                kept.append(row)                 # a result the user added back as a target
+            continue
+        try:
+            os.remove(p)
+            removed += 1
+        except OSError:
+            if not row.get('leftover'):
+                kept.append(row)
+    _write_outputs(folder, kept)
     return removed
+
+
+def drop_missing_targets():
+    """Targets whose file is gone (deleted, renamed or moved on Drive; a Clean
+    temp) leave the list: Gradio's file list cannot show a missing file, and
+    every event returning the list failed. Returns the names removed."""
+    global selected_target
+    gone = [t['name'] for t in targets if not os.path.isfile(t['path'])]
+    if gone:
+        targets[:] = [t for t in targets if os.path.isfile(t['path'])]
+        if target() is None:
+            selected_target = targets[0]['id'] if targets else None
+    return gone
 
 
 def reset_after_temp_clean():
@@ -948,13 +1116,9 @@ def reset_after_temp_clean():
     the temp folder leave the list (their files are gone); targets added by
     path stay (their thumbnails come back on the next refresh). Sources and
     picked people are in memory and stay. Returns the names removed."""
-    global selected_target
-    from roop.capturer import prepare_seek_copy
-    gone = [t for t in targets if not os.path.isfile(t['path'])]
-    targets[:] = [t for t in targets if os.path.isfile(t['path'])]
+    from unleashed.capturer import prepare_seek_copy
+    gone = drop_missing_targets()
     for t in targets:
         if t['kind'] == 'video':
             prepare_seek_copy(t['path'])         # its quick-seek copy was in the temp folder
-    if target() is None:
-        selected_target = targets[0]['id'] if targets else None
-    return [t['name'] for t in gone]
+    return gone

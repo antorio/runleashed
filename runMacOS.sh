@@ -1,5 +1,5 @@
 #!/bin/bash
-# Run RunLeashed locally on a Mac (UI work, building facesets, small previews).
+# Run Unleashed locally on a Mac (UI work, building facesets, small previews).
 # Heavy video renders belong on Colab: here everything runs on the CPU.
 #
 #   ./runMacOS.sh            first run: makes .venv and installs the packages,
